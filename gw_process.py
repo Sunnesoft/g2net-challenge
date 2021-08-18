@@ -526,8 +526,8 @@ def normalize_cqt_image(qspectr, esp=1e-6, cqt_norm_minmax=None):
 
     qspectr = (qspectr - mean) / (std + esp)
 
-    print(np.median(qspectr), np.mean(qspectr), np.std(qspectr),
-          np.min(qspectr), np.max(qspectr))
+    # print(np.median(qspectr), np.mean(qspectr), np.std(qspectr),
+    #       np.min(qspectr), np.max(qspectr))
 
     if cqt_norm_minmax is None:
         qspectr_min, qspectr_max = qspectr.min(), qspectr.max()
