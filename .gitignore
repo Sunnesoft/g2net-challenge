@@ -1,0 +1,10 @@
+*.user
+.idea/
+.git/
+data/
+*.npy
+*.hdf5
+*.zip
+*.csv
+*.txt
+__pycache__
