@@ -11,6 +11,7 @@ import operator
 import math
 import h5py
 import os
+import multiprocessing
 
 import matplotlib.pyplot as plt
 
@@ -541,6 +542,28 @@ def normalize_cqt_image(qspectr, esp=1e-6, cqt_norm_minmax=None):
     return np.flip(qspectr, 0)
 
 
+def qpipline_worker(
+        cqt_dict, data, data_label, sample_rate, ww_fftlength, ww_nperseg, ww_overlap, ww_window,
+        frange, qrange, qmismatch, outlier_threshold, out_time_range,
+        out_freq_range, esp, cqt_norm_minmax):
+    duration = data.size / sample_rate
+    if ww_fftlength is None:
+        ww_fftlength = duration
+
+    if ww_fftlength > duration:
+        ww_fftlength = duration
+
+    xout, fout, qspectr, q = qpipline(
+        data=data, sample_rate=sample_rate, ww_fftlength=ww_fftlength,
+        ww_window=ww_window, ww_nperseg=ww_nperseg, ww_overlap=ww_overlap,
+        frange=frange, qrange=qrange, qmismatch=qmismatch,
+        outlier_threshold=outlier_threshold, out_time_range=out_time_range,
+        out_freq_range=out_freq_range)
+
+    qspectr = normalize_cqt_image(qspectr, esp, cqt_norm_minmax)
+    cqt_dict[data_label] = qspectr
+
+
 def create_cqt_image(
         fname, sample_rate,
         ww_fftlength=None, ww_nperseg=256, ww_overlap=0.25, ww_window=('tukey', 0.25),
@@ -550,24 +573,27 @@ def create_cqt_image(
     data = load_timeseries(fname)
     data = crop_timeseries(data, input_time_range)
 
+    manager = multiprocessing.Manager()
+    cqt_dict = manager.dict()
+
+    jobs = []
+    for i, d in enumerate(data):
+        data_label = str(i)
+        p = multiprocessing.Process(
+            target=qpipline_worker,
+            args=(cqt_dict, d, data_label, sample_rate, ww_fftlength, ww_nperseg, ww_overlap,
+                  ww_window, frange, qrange, qmismatch, outlier_threshold,
+                  out_time_range, out_freq_range, esp, cqt_norm_minmax))
+        jobs.append(p)
+        p.start()
+
+    for proc in jobs:
+        proc.join()
+
     result = []
-    for d in data:
-        duration = d.size / sample_rate
-        if ww_fftlength is None:
-            ww_fftlength = duration
-
-        if ww_fftlength > duration:
-            ww_fftlength = duration
-
-        xout, fout, qspectr, q = qpipline(
-            data=d, sample_rate=sample_rate, ww_fftlength=ww_fftlength,
-            ww_window=ww_window, ww_nperseg=ww_nperseg, ww_overlap=ww_overlap,
-            frange=frange, qrange=qrange, qmismatch=qmismatch,
-            outlier_threshold=outlier_threshold, out_time_range=out_time_range,
-            out_freq_range=out_freq_range)
-
-        qspectr = normalize_cqt_image(qspectr, esp, cqt_norm_minmax)
-        result.append(qspectr)
+    for i, d in enumerate(data):
+        data_label = str(i)
+        result.append(cqt_dict[data_label])
 
     if mode == 'vstacked':
         result = np.vstack(result)
