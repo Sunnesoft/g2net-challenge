@@ -50,11 +50,9 @@ def get_labels(df, targ_id):
 
 
 def get_task(df, files, path):
-    result = []
-    for fname in files:
-        id = id_from_image_name(fname)
-        row = df.loc[df['id'] == id]
-        result.append((os.path.join(path, fname), row['target']))
+    ids = [id_from_image_name(fname) for fname in files]
+    rows = df.loc[df['id'].isin(ids)]
+    result = [(os.path.join(path, row['id'] + '.png'), row['target']) for i, row in rows.iterrows()]
     return result
 
 
@@ -98,5 +96,6 @@ if __name__ == '__main__':
     fpath = './data/cqt/train/'
     labels_fn = './training_labels.csv'
     out_fn = './data/train.tfrecord'
-    task = train_dir_to_task(fpath, labels_fn)
-    images_to_train_tfrecord(task, out_fn)
+    with tf.device('/gpu:0'):
+        task = train_dir_to_task(fpath, labels_fn)
+        images_to_train_tfrecord(task, out_fn)
