@@ -87,9 +87,14 @@ def images_to_train_tfrecord(tasks, out_fn):
     with tf.io.TFRecordWriter(out_fn) as writer:
         for task in tasks:
             filename, label = task
-            image_string = open_image(filename)
-            tf_example = image_example(image_string, label)
-            writer.write(tf_example.SerializeToString())
+            try:
+                image_string = open_image(filename)
+                tf_example = image_example(image_string, label)
+                writer.write(tf_example.SerializeToString())
+            except:
+                print(f'Skip invalid file {filename}')
+                continue
+
 
 
 if __name__ == '__main__':
