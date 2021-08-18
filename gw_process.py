@@ -5,7 +5,6 @@ from scipy.fft import irfft, rfft, fft, ifft, fftfreq, ifftshift, rfftfreq
 from scipy.interpolate import interp1d, interp2d, InterpolatedUnivariateSpline
 from typing import Union, Tuple
 from PIL import Image
-import numpy as np
 
 import operator
 import math
@@ -13,6 +12,7 @@ import h5py
 import os
 import multiprocessing
 
+import numpy as np
 import matplotlib.pyplot as plt
 
 
