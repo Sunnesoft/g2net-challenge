@@ -198,96 +198,11 @@ def get_dataset(filenames, labeled=True, shuffle=2048, batch_size=64):
     return dataset
 
 
-def show_batch(image_batch, label_batch):
-    plt.figure(figsize=(10, 10))
-    for n in range(25):
-        ax = plt.subplot(5, 5, n + 1)
-        plt.imshow(image_batch[n] / 255.0)
-        if label_batch[n]:
-            plt.title("GW_TRUE")
-        else:
-            plt.title("GW_FALSE")
-        plt.axis("off")
-
-
-def make_model(image_size):
-    base_model = tf.keras.applications.Xception(
-        input_shape=image_size, include_top=False, weights=None
-    )
-
-    base_model.trainable = False
-
-    inputs = tf.keras.layers.Input(image_size)
-    x = tf.keras.applications.xception.preprocess_input(inputs)
-    x = base_model(x)
-    x = tf.keras.layers.GlobalAveragePooling2D()(x)
-    x = tf.keras.layers.Dense(8, activation="relu")(x)
-    x = tf.keras.layers.Dropout(0.7)(x)
-    outputs = tf.keras.layers.Dense(1, activation="sigmoid")(x)
-
-    model = tf.keras.Model(inputs=inputs, outputs=outputs)
-
-    model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=lr_schedule),
-        loss="binary_crossentropy",
-        metrics=tf.keras.metrics.AUC(name="auc"),
-    )
-
-    return model
-
-
 if __name__ == '__main__':
-    mode = 'CPU' #'GPU'
-    try:
-        tpu = tf.distribute.cluster_resolver.TPUClusterResolver()
-        print("Device:", tpu.master())
-        tf.config.experimental_connect_to_cluster(tpu)
-        tf.tpu.experimental.initialize_tpu_system(tpu)
-        strategy = tf.distribute.TPUStrategy(tpu)
-    except:
-        tf.debugging.set_log_device_placement(True)
-        gpus = tf.config.list_logical_devices(mode)
-        strategy = tf.distribute.MirroredStrategy(gpus)
-
-    print("Number of replicas:", strategy.num_replicas_in_sync)
-
-
     fpath = './data/cqt/train/'
     labels_fn = './training_labels.csv'
     out_path = './data/tfrecords/'
     out_task = {}
     out_task[out_path] = 100
 
-    # create_tfrecords(fpath, out_task, labels_fn, shuffle=True, batch_size=64, remove_older=True)
-
-    batch_size = 32
-    train_fn, valid_fn = load_filenames(out_path, split=(0.9, 0.1))
-    train_dataset = get_dataset(train_fn, batch_size=batch_size)
-    valid_dataset = get_dataset(valid_fn, batch_size=batch_size)
-
-    image_batch, label_batch = next(iter(train_dataset))
-    show_batch(image_batch.numpy(), label_batch.numpy())
-    plt.show()
-
-    initial_learning_rate = 0.01
-    lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
-        initial_learning_rate, decay_steps=20, decay_rate=0.96, staircase=True
-    )
-
-    checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(
-        "gw_model.h5", save_best_only=True
-    )
-
-    early_stopping_cb = tf.keras.callbacks.EarlyStopping(
-        patience=10, restore_best_weights=True
-    )
-
-    with strategy.scope():
-        model = make_model(image_size=(760, 760, 1))
-
-    history = model.fit(
-        train_dataset,
-        epochs=2,
-        validation_data=valid_dataset,
-        callbacks=[checkpoint_cb, early_stopping_cb],
-    )
+    create_tfrecords(fpath, out_task, labels_fn, shuffle=True, batch_size=64, remove_older=True)
