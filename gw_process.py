@@ -569,26 +569,34 @@ def create_cqt_image(
         ww_fftlength=None, ww_nperseg=256, ww_overlap=0.25, ww_window=('tukey', 0.25),
         frange=(30, 400), qrange=(4, 64), qmismatch=0.05, outlier_threshold=3.0,
         out_time_range=(0, 2, 1e-3), out_freq_range=(30, 400, 1),
-        esp=1e-6, mode='stacked', input_time_range=None, cqt_norm_minmax=None):
+        esp=1e-6, mode='stacked', input_time_range=None, cqt_norm_minmax=None, multiprocss=True):
     data = load_timeseries(fname)
     data = crop_timeseries(data, input_time_range)
 
-    manager = multiprocessing.Manager()
-    cqt_dict = manager.dict()
+    if multiprocss:
+        manager = multiprocessing.Manager()
+        cqt_dict = manager.dict()
 
-    jobs = []
-    for i, d in enumerate(data):
-        data_label = str(i)
-        p = multiprocessing.Process(
-            target=qpipline_worker,
-            args=(cqt_dict, d, data_label, sample_rate, ww_fftlength, ww_nperseg, ww_overlap,
-                  ww_window, frange, qrange, qmismatch, outlier_threshold,
-                  out_time_range, out_freq_range, esp, cqt_norm_minmax))
-        jobs.append(p)
-        p.start()
+        jobs = []
+        for i, d in enumerate(data):
+            data_label = str(i)
+            p = multiprocessing.Process(
+                target=qpipline_worker,
+                args=(cqt_dict, d, data_label, sample_rate, ww_fftlength, ww_nperseg, ww_overlap,
+                      ww_window, frange, qrange, qmismatch, outlier_threshold,
+                      out_time_range, out_freq_range, esp, cqt_norm_minmax))
+            jobs.append(p)
+            p.start()
 
-    for proc in jobs:
-        proc.join()
+        for proc in jobs:
+            proc.join()
+    else:
+        cqt_dict = {}
+        for i, d in enumerate(data):
+            data_label = str(i)
+            qpipline_worker(cqt_dict, d, data_label, sample_rate, ww_fftlength, ww_nperseg, ww_overlap,
+                          ww_window, frange, qrange, qmismatch, outlier_threshold,
+                          out_time_range, out_freq_range, esp, cqt_norm_minmax)
 
     result = []
     for i, d in enumerate(data):
@@ -642,5 +650,5 @@ if __name__ == '__main__':
         ww_nperseg=2048, ww_overlap=0.75, ww_window=('tukey', 0.15),
         frange=(35, 250), qrange=(4, 64), qmismatch=0.05, outlier_threshold=3.0,
         out_time_range=(0, duration, 15 / sample_rate), out_freq_range=(35, 250, 1),
-        mode='channels', input_time_range=None, cqt_norm_minmax=(-1, 20))
+        mode='channels', input_time_range=None, cqt_norm_minmax=(-1, 20), multiprocss=False)
     img.resize((760, 760)).show()
