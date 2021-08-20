@@ -375,8 +375,8 @@ def qsearch(data, sample_rate, qrange, mismatch):
         for freq in freqs:
             padded, w = apply_qwindow(fdata, q, freq, mismatch, sample_rate, duration)
 
-            wenergy = ifftshift(padded)
-            tdenergy = ifft(wenergy)
+            # wenergy = ifftshift(padded)
+            tdenergy = ifft(padded)
             energy = tdenergy.real ** 2. + tdenergy.imag ** 2.
             energy = energy / np.mean(energy)
             energy = energy.astype("float64", casting="same_kind", copy=False)
@@ -642,13 +642,19 @@ if __name__ == '__main__':
     # # plt.yscale('log')
     # plt.show()
 
-    fname = './000a5b6e5c.npy' # './H-H1_LOSC_4_V1-1126256640-4096.hdf5'
-    sample_rate = 2048
-    duration = 2.0
-    img = create_cqt_image(
-        fname, sample_rate=sample_rate, ww_fftlength=duration,
-        ww_nperseg=2048, ww_overlap=0.75, ww_window=('tukey', 0.15),
-        frange=(35, 250), qrange=(4, 64), qmismatch=0.05, outlier_threshold=3.0,
-        out_time_range=(0, duration, 15 / sample_rate), out_freq_range=(35, 250, 1),
-        mode='channels', input_time_range=None, cqt_norm_minmax=(-1, 20), multiprocss=False)
-    img.resize((760, 760)).show()
+    TRAIN_CQT_PATH = './data/tmp/train/'
+    os.makedirs(TRAIN_CQT_PATH, exist_ok=True)
+
+    for i in range(100):
+        fname = './000a5b6e5c.npy' # './H-H1_LOSC_4_V1-1126256640-4096.hdf5'
+        sample_rate = 2048
+        duration = 2.0
+        img = create_cqt_image(
+            fname, sample_rate=sample_rate, ww_fftlength=duration,
+            ww_nperseg=1024, ww_overlap=0.75, ww_window=('tukey', 0.15),
+            frange=(35, 250), qrange=(4, 32), qmismatch=0.2, outlier_threshold=3.0,
+            out_time_range=(0, duration, 1e-2), out_freq_range=(35, 250, 1),
+            mode='vstacked', input_time_range=None, cqt_norm_minmax=(-1, 20), multiprocss=True)
+        # img.resize((512, 512)).show()
+        save_cqt_image(img, TRAIN_CQT_PATH + '000a5b6e5c.png', size=(512, 512))
+        print(i)
