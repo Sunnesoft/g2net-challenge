@@ -9,25 +9,35 @@ import shutil
 
 AUTOTUNE = tf.data.AUTOTUNE
 
+
 def _bytes_feature(value):
-  """Returns a bytes_list from a string / byte."""
-  if isinstance(value, type(tf.constant(0))):
-    value = value.numpy() # BytesList won't unpack a string from an EagerTensor.
-  return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
+    """Returns a bytes_list from a string / byte."""
+    if isinstance(value, type(tf.constant(0))):
+        value = value.numpy()  # BytesList won't unpack a string from an EagerTensor.
+    return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
+
 
 def _float_feature(value):
-  """Returns a float_list from a float / double."""
-  return tf.train.Feature(float_list=tf.train.FloatList(value=[value]))
+    """Returns a float_list from a float / double."""
+    return tf.train.Feature(float_list=tf.train.FloatList(value=[value]))
+
 
 def _int64_feature(value):
-  """Returns an int64_list from a bool / enum / int / uint."""
-  return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
+    """Returns an int64_list from a bool / enum / int / uint."""
+    return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
 
 
-def decode_image(example):
-    image = tf.image.decode_png(example["image_raw"], channels=0)
+def decode_image(example, size, scale):
+    image = tf.image.decode_png(example["image_raw"])
     image = tf.cast(image, tf.float32)
     image = tf.reshape(image, [example["width"], example["height"], example["depth"]])
+
+    if scale is not None:
+        image = image / tf.constant(scale, dtype=tf.float32)
+
+    if size is not None and size[0] != example["width"] \
+            and size[1] != example["height"]:
+        image = tf.image.resize(image, size)
     return image
 
 
@@ -35,7 +45,7 @@ def open_image(filename):
     return open(filename, 'rb').read()
 
 
-def read_tfrecord(example, labeled):
+def read_tfrecord(example, labeled, image_size, image_scale):
     tfrecord_format = (
         {
             'height': tf.io.FixedLenFeature([], tf.int64),
@@ -53,16 +63,22 @@ def read_tfrecord(example, labeled):
         }
     )
     example = tf.io.parse_single_example(example, tfrecord_format)
-    image = decode_image(example)
+    image = decode_image(example, size=image_size, scale=image_scale)
     if labeled:
         label = tf.cast(example["target"], tf.int32)
         return image, label
     return image
 
 
-def write_tfrecord(writer, image, label):
-    image_shape = tf.io.decode_png(image).shape
+def write_tfrecord(writer, image, label, image_size):
+    dimage = tf.image.decode_png(image)
 
+    if image_size is not None and image_size[0:2] != dimage.shape[0:2]:
+        dimage = tf.image.resize(dimage, image_size)
+        dimage = tf.cast(dimage, tf.uint8)
+        image = tf.image.encode_png(dimage)
+
+    image_shape = dimage.shape
     feature = {
         'height': _int64_feature(image_shape[0]),
         'width': _int64_feature(image_shape[1]),
@@ -133,7 +149,8 @@ def create_tfrecords(
         labels=None,
         shuffle=True,
         batch_size=64,
-        remove_older=False):
+        remove_older=False,
+        image_size = None):
     if isinstance(labels, str):
         labels = load_labels(labels)
 
@@ -153,14 +170,13 @@ def create_tfrecords(
                 for task in batched_tasks:
                     filename, label = task
                     try:
-                        write_tfrecord(writer, open_image(filename), label)
+                        write_tfrecord(writer, open_image(filename), label, image_size)
                     except:
                         print(f'Skip invalid file {filename}')
                         continue
 
 
-
-def load_dataset(filenames, labeled=True):
+def load_dataset(filenames, labeled=True, image_size=None, image_scale=None):
     ignore_order = tf.data.Options()
     ignore_order.experimental_deterministic = False  # disable order, increase speed
     dataset = tf.data.TFRecordDataset(
@@ -170,7 +186,10 @@ def load_dataset(filenames, labeled=True):
         ignore_order
     )  # uses data as soon as it streams in, rather than in its original order
     dataset = dataset.map(
-        partial(read_tfrecord, labeled=labeled), num_parallel_calls=AUTOTUNE
+        partial(read_tfrecord,
+                labeled=labeled,
+                image_size=image_size,
+                image_scale=image_scale), num_parallel_calls=AUTOTUNE
     )
     # returns a dataset of (image, label) pairs if labeled=True or just images if labeled=False
     return dataset
@@ -185,12 +204,13 @@ def load_filenames(path, split=None):
     prev_ind = 0
     for split_val in split:
         split_ind = int(split_val * len(fns))
-        res.append(fns[prev_ind:prev_ind+split_ind])
+        res.append(fns[prev_ind:prev_ind + split_ind])
         prev_ind = split_ind
     return res
 
 
-def get_dataset(filenames, labeled=True, shuffle=2048, batch_size=64):
+def get_dataset(filenames, labeled=True, shuffle=2048, batch_size=64,
+                image_size=None, image_scale=None):
     dataset = load_dataset(filenames, labeled=labeled)
     dataset = dataset.shuffle(shuffle)
     dataset = dataset.prefetch(buffer_size=AUTOTUNE)
@@ -205,4 +225,6 @@ if __name__ == '__main__':
     out_task = {}
     out_task[out_path] = 100
 
-    create_tfrecords(fpath, out_task, labels_fn, shuffle=True, batch_size=64, remove_older=True)
+    create_tfrecords(fpath, out_task, labels_fn,
+                     shuffle=True, batch_size=1024, remove_older=True,
+                     image_size=(71, 71))

@@ -1,7 +1,7 @@
 import gw_dataset as gwds
 
 import tensorflow as tf
-from typing import Literal, Tuple
+from typing import Literal, Tuple, Union
 from enum import Enum
 import os
 import matplotlib.pyplot as plt
@@ -33,7 +33,8 @@ class GwModelBase:
     def __init__(self,
                  name: str,
                  mode: Literal[TfDevice.TPU, TfDevice.GPU, TfDevice.TPU],
-                 image_size: Tuple[int, int, int]):
+                 image_size: Tuple[int, int, int],
+                 image_scale_factor: Union[None, float] = None):
         self._mode = mode
         self._name = name
         self._model_fn = f'{self._name}.h5'
@@ -62,6 +63,7 @@ class GwModelBase:
         self._dataset_valid = None
         self._dataset_test = None
         self._image_size = image_size
+        self._image_scale_factor = image_scale_factor
         self._model = None
         self._history = None
 
@@ -77,11 +79,13 @@ class GwModelBase:
 
         if len(train_fn) > 0.0:
             self._dataset_train = gwds.get_dataset(
-                train_fn, batch_size=batch_size, shuffle=shuffle)
+                train_fn, batch_size=batch_size, shuffle=shuffle,
+                image_size=self._image_size[0:2], image_scale=self._image_scale_factor)
 
         if len(valid_fn) > 0.0:
             self._dataset_valid = gwds.get_dataset(
-                valid_fn, batch_size=batch_size, shuffle=shuffle)
+                valid_fn, batch_size=batch_size, shuffle=shuffle,
+                image_size=self._image_size[0:2], image_scale=self._image_scale_factor)
 
     def load_test_dataset(
             self,
@@ -92,7 +96,8 @@ class GwModelBase:
 
         if len(test_fn) > 0.0:
             self._dataset_test = gwds.get_dataset(
-                test_fn, labeled=False, batch_size=batch_size, shuffle=shuffle)
+                test_fn, labeled=False, batch_size=batch_size,
+                shuffle=shuffle, image_size=self._image_size[0:2], image_scale=self._image_scale_factor)
 
     def compile(self, **kwargs):
         with self._strategy.scope():
@@ -103,6 +108,9 @@ class GwModelBase:
 
     def load_model(self, path):
         self._model.load_weights(os.path.join(path, self._model_fn))
+
+    def print_model(self):
+        print(self._model.summary())
 
     def fit(self, **kwargs):
         if 'callbacks' not in kwargs:
@@ -171,12 +179,45 @@ class GwXception(GwModelBase):
         return model
 
 
+class GwEfficientNetB0(GwModelBase):
+    def make_model(self, learn_rate_schedule=None, **kwargs):
+        base_model = tf.keras.applications.EfficientNetB0(
+            input_shape=self._image_size, include_top=False, weights=None
+        )
+
+        base_model.trainable = False
+
+        inputs = tf.keras.layers.Input(self._image_size)
+        x = base_model(inputs)
+        x = tf.keras.layers.GlobalAveragePooling2D()(x)
+        x = tf.keras.layers.Dense(8, activation="relu")(x)
+        x = tf.keras.layers.Dropout(0.7)(x)
+        outputs = tf.keras.layers.Dense(1, activation="sigmoid")(x)
+
+        model = tf.keras.Model(inputs=inputs, outputs=outputs)
+
+        if learn_rate_schedule is None:
+            initial_learning_rate = 0.01
+            learn_rate_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+                initial_learning_rate, decay_steps=20, decay_rate=0.96, staircase=True
+            )
+
+        model.compile(
+            optimizer=tf.keras.optimizers.Adam(learning_rate=learn_rate_schedule),
+            loss="binary_crossentropy",
+            metrics=tf.keras.metrics.AUC(name="auc"),
+        )
+
+        return model
+
+
 if __name__ == '__main__':
     data_path = './data/tfrecords/'
 
-    solver = GwXception('xception', TfDevice.CPU, (760, 760, 1))
+    solver = GwXception('xception', TfDevice.GPU, (71, 71, 1), 255.0)
     solver.load_train_dataset(data_path)
     solver.show_random_train_batch(subs={'1': 'GW_TRUE', '0': 'GW_FALSE'})
 
     solver.compile()
-    history = solver.fit(epochs=2)
+    solver.print_model()
+    history = solver.fit(epochs=40)
