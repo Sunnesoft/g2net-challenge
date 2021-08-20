@@ -7,4 +7,5 @@ data/
 *.zip
 *.csv
 *.txt
+*.h5
 __pycache__
