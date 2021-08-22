@@ -8,6 +8,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import math
 
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D
+from tensorflow.keras.layers import MaxPooling2D
+from tensorflow.keras.layers import Activation
+from tensorflow.keras.layers import Flatten
+from tensorflow.keras.layers import Dense
+
 
 class TfDevice(Enum):
     CPU = 'CPU'
@@ -152,7 +159,7 @@ class GwXception(GwModelBase):
             input_shape=self._image_size, include_top=False, weights=None
         )
 
-        base_model.trainable = False
+        base_model.trainable = True
 
         inputs = tf.keras.layers.Input(self._image_size)
         x = tf.keras.applications.xception.preprocess_input(inputs)
@@ -171,7 +178,7 @@ class GwXception(GwModelBase):
             )
 
         model.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=learn_rate_schedule),
+            optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
             loss="binary_crossentropy",
             metrics=tf.keras.metrics.AUC(name="auc"),
         )
@@ -185,7 +192,7 @@ class GwEfficientNetB0(GwModelBase):
             input_shape=self._image_size, include_top=False, weights=None
         )
 
-        base_model.trainable = False
+        base_model.trainable = True
 
         inputs = tf.keras.layers.Input(self._image_size)
         x = base_model(inputs)
@@ -211,13 +218,46 @@ class GwEfficientNetB0(GwModelBase):
         return model
 
 
+class GwLeNet(GwModelBase):
+    def make_model(self, optimizer, loss, metrics, **kwargs):
+        model = Sequential()
+        # first set of CONV => RELU => POOL layers
+        model.add(Conv2D(20, (5, 5), padding="same",
+                         input_shape=self._image_size))
+        model.add(Activation("relu"))
+        model.add(MaxPooling2D(pool_size=(2, 2), strides=(2, 2)))
+        # second set of CONV => RELU => POOL layers
+        model.add(Conv2D(50, (5, 5), padding="same"))
+        model.add(Activation("relu"))
+        model.add(MaxPooling2D(pool_size=(2, 2), strides=(2, 2)))
+        # first (and only) set of FC => RELU layers
+        model.add(Flatten())
+        model.add(Dense(500))
+        model.add(Activation("relu"))
+        # sigmoid classifier
+        model.add(Dense(1))
+        model.add(Activation("sigmoid"))
+
+        model.compile(
+            optimizer=optimizer,
+            loss=loss,
+            metrics=metrics,
+        )
+
+        return model
+
+
 if __name__ == '__main__':
     data_path = './data/tfrecords/'
 
-    solver = GwXception('xception', TfDevice.GPU, (71, 71, 1), 255.0)
-    solver.load_train_dataset(data_path)
+    optimizer = 'adam'
+    loss = 'binary_crossentropy'
+    metrics = ['AUC']
+
+    solver = GwEfficientNetB0('eff_net_b0', TfDevice.CPU, (71, 71, 1), 255.0)
+    solver.load_train_dataset(data_path, batch_size=64)
     solver.show_random_train_batch(subs={'1': 'GW_TRUE', '0': 'GW_FALSE'})
 
     solver.compile()
     solver.print_model()
-    history = solver.fit(epochs=40)
+    history = solver.fit(epochs=20)

@@ -10,7 +10,6 @@ import operator
 import math
 import h5py
 import os
-import multiprocessing
 import pywt
 import scaleogram as scg
 
@@ -110,12 +109,12 @@ def planck(N, nleft=0, nright=0):
     if nleft:
         w[0] *= 0
         zleft = np.array([nleft * (1. / k + 1. / (k - nleft))
-                             for k in range(1, nleft)])
+                          for k in range(1, nleft)])
         w[1:nleft] *= expit(-zleft)
     if nright:
         w[N - 1] *= 0
         zright = np.array([-nright * (1. / (k - nright) + 1. / k)
-                              for k in range(1, nright)])
+                           for k in range(1, nright)])
         w[N - nright:N - 1] *= expit(-zright)
     return w
 
@@ -199,7 +198,7 @@ def whiten_conv(data, sample_rate, fftlength, overlap=0, window='hanning', fdura
     return out * np.sqrt(2 / sample_rate)
 
 
-def apply_window(data, kind:Union[Tuple[str, float], None, float, np.ndarray]=('tukey', 0.25)):
+def apply_window(data, kind: Union[Tuple[str, float], None, float, np.ndarray] = ('tukey', 0.25)):
     if kind is None:
         return data
 
@@ -313,41 +312,45 @@ def plot_spectrogram(spec, freq, time, spec_cmap='ocean', extent=None,
     return plt_spec
 
 
-def apply_qwindow(fdata, q, frequency, mismatch, sample_rate, duration):
+def apply_qwindow(fdata, q, qprime, frequency, deltam, sample_rate, duration):
     # duration = len(fdata) / sample_rate
 
-    qprime = q / 11 ** (1 / 2.)
     windowsize = 2 * int(frequency / qprime * duration) + 1
 
     half = int((windowsize - 1) / 2)
-    indeces = np.arange(-half, half + 1)
-    data_indeces = np.round(indeces + 1 + frequency * duration).astype(int)
+    indeces = np.arange(-half, half + 1, 1.0, dtype=np.float64)
+    data_indeces = np.round(indeces + (1 + frequency * duration)).astype(int)
 
-    wfrequencies = indeces / duration
-    xfrequencies = wfrequencies * qprime / frequency
+    np.multiply(indeces, qprime / frequency / duration, out=indeces)
     tcum_mismatch = duration * 2 * np.pi * frequency / q
-    deltam = 2 * (mismatch / 3.) ** (1 / 2.)
     ntiles = 2 ** math.ceil(math.log(tcum_mismatch / deltam, 2))
 
     pad = ntiles - windowsize
     padding = (int((pad - 1) / 2.), int((pad + 1) / 2.))
 
-    norm = ntiles / (duration * sample_rate) * (315 * qprime / (128 * frequency)) ** (1 / 2.)
-    window = (1 - xfrequencies ** 2) ** 2 * norm
+    norm = ntiles / (duration * sample_rate) * (315 * qprime / (128 * frequency)) ** 0.5
 
-    windowed = fdata[data_indeces] * window
-    padded = np.pad(windowed, padding, mode='constant')
-    return padded, window
+    np.square(indeces, out=indeces)
+    np.subtract(1.0, indeces, out=indeces)
+    np.square(indeces, out=indeces)
+    np.multiply(indeces, norm, out=indeces)
+    window = np.asarray(indeces, dtype=np.complex128)
+
+    np.multiply(fdata[data_indeces], window, out=window)
+    padded = np.zeros(ntiles, dtype=window.dtype)
+    padded[padding[0]:-padding[1]] = window
+
+    return padded
 
 
-def qsearch(data, sample_rate, qrange, mismatch):
+def qsearch(data, sample_rate, qrange, mismatch, output_all_tiles=False):
     duration = len(data) / sample_rate
 
-    deltam = 2 * (mismatch / 3.) ** (1 / 2.)
-    cumum = math.log(qrange[1] / qrange[0]) / 2 ** (1 / 2.)
+    deltam = 2 * (mismatch / 3.) ** 0.5
+    cumum = math.log(qrange[1] / qrange[0]) / 2 ** 0.5
     nplanes = int(max(math.ceil(cumum / deltam), 1))
     dq = cumum / nplanes
-    qlist = [qrange[0] * math.exp(2 ** (1 / 2.) * dq * (i + .5)) for i in range(nplanes)]
+    qlist = [qrange[0] * math.exp(2 ** 0.5 * dq * (i + .5)) for i in range(nplanes)]
 
     nfft = len(data)
     fdata = rfft(data, n=nfft) / nfft
@@ -357,50 +360,47 @@ def qsearch(data, sample_rate, qrange, mismatch):
     glob_tiles = []
 
     for q in qlist:
-        qprime = q / 11 ** (1 / 2.)
+        qprime = q / 11 ** 0.5
         minf = 50 * q / (2 * math.pi * duration)
         maxf = sample_rate / 2 / (1 + 1 / qprime)
 
-        fcum_mismatch = math.log(maxf / minf) * (2 + q ** 2) ** (1 / 2.) / 2.
+        fcum_mismatch = math.log(maxf / minf) * (2 + q ** 2) ** 0.5 / 2.
         nfreq = int(max(1, math.ceil(fcum_mismatch / deltam)))
         fstep = fcum_mismatch / nfreq
         fstepmin = 1.0 / duration
 
-        freqs = [minf * math.exp(2 / (2 + q ** 2) ** (1 / 2.) * (i + .5) * fstep) // fstepmin * fstepmin for i in
-                 range(nfreq)]
-        freqs = list(set(freqs))
-        freqs = sorted(freqs)
+        freqs = []
+        for i in range(nfreq):
+            f = minf * math.exp(2 / (2 + q ** 2) ** 0.5 * (i + .5) * fstep) // fstepmin * fstepmin
+            if f in freqs:
+                continue
+            freqs.append(f)
 
-        peak = {'energy': 0, 'snr': None, 'frequency': None}
+        peak_energy = 0.0
         tile = []
 
         for freq in freqs:
-            padded, w = apply_qwindow(fdata, q, freq, mismatch, sample_rate, duration)
+            padded = apply_qwindow(fdata, q, qprime, freq, deltam, sample_rate, duration)
 
             # wenergy = ifftshift(padded)
-            tdenergy = ifft(padded)
-            energy = tdenergy.real ** 2. + tdenergy.imag ** 2.
-            energy = energy / np.mean(energy)
-            energy = energy.astype("float64", casting="same_kind", copy=False)
+            tenergy = ifft(padded)
+            energy = np.absolute(tenergy) ** 2
+            np.multiply(energy, 1.0 / np.mean(energy), out=energy)
 
-            maxidx = energy.argmax()
-            maxe = energy[maxidx]
-            if maxe > peak['energy']:
-                peak.update({
-                    'energy': maxe,
-                    'snr': (2 * maxe) ** (1 / 2.),
-                    'frequency': freq
-                })
+            maxe = energy.max()
+            if maxe > peak_energy:
+                peak_energy = maxe
 
             tile.append(energy)
 
-        if peak['energy'] > glob_peak['energy']:
-            glob_peak['energy'] = peak['energy']
+        if peak_energy > glob_peak['energy']:
+            glob_peak['energy'] = peak_energy
             glob_peak['tile'] = tile
             glob_peak['freqs'] = freqs
             glob_peak['q'] = q
 
-        glob_tiles.append({'tile': tile, 'freqs': freqs, 'duration': duration, 'q': q})
+        if output_all_tiles:
+            glob_tiles.append({'tile': tile, 'freqs': freqs, 'duration': duration, 'q': q})
 
     return glob_peak, glob_tiles
 
@@ -441,7 +441,7 @@ def interpolate_cqt_data(data, time_range, freq_range, t0=0):
     q = data['q']
 
     tile_interp = []
-    for i, row in enumerate(tile):
+    for row in tile:
         xrow = np.linspace(t0, duration, len(row))
         interp = InterpolatedUnivariateSpline(xrow, row)
         tile_interp.append(interp(xout).astype(float, casting="same_kind", copy=False))
@@ -464,7 +464,7 @@ class GwTimeseries():
         self._freq = freq
         self._epoch = epoch
         self._duration = len(self._ts) / self._freq
-        self._time = np.linspace(self._epoch, self._epoch + self._duration, self._ts.shape[1])
+        self._time = np.linspace(self._epoch, self._epoch + self._duration, self._ts.shape[0])
         self._name = name
 
     @staticmethod
@@ -487,7 +487,17 @@ class GwTimeseries():
     def save(fp, ts):
         filename, file_extension = os.path.splitext(fp)
         if file_extension in ['.npy']:
-            np.save(fp, ts)
+            result = None
+            if isinstance(ts, GwTimeseries):
+                result = ts.value
+            elif isinstance(ts, list):
+                result = []
+                for d in ts:
+                    result.append(d.value)
+                result = np.array(result)
+            else:
+                raise ValueError('unexpected type of timeseries data')
+            np.save(fp, result)
             return True
         raise ValueError('unexpected timeseries file extension, use .npy')
 
@@ -506,11 +516,20 @@ class GwTimeseries():
     def copy(self):
         return GwTimeseries(np.copy(self._ts), self._freq, self._epoch, self._name)
 
-    def whiten(self, fftlength, nperseg=256, overlap=0.5, window=('tukey', 0.25)):
-        self._ts = whiten(
-            data=self._ts, sample_rate=self._freq,
-            fftlength=fftlength, nperseg=nperseg,
-            overlap=overlap, window=window)
+    def apply_window(self, window):
+        self._ts = apply_window(self._ts, window)
+
+    def whiten(self, psd_val):
+        f, Pxx = psd_val
+        psd_interp = interp1d(f, Pxx)
+
+        Nt = len(self._ts)
+        dt = 1.0 / self.sample_rate
+        freqs = rfftfreq(Nt, dt)
+        hf = rfft(self._ts)
+        norm = 1. / np.sqrt(1. / (dt * 2))
+        white_hf = hf / np.sqrt(psd_interp(freqs)) * norm
+        self._ts = irfft(white_hf, n=Nt)
 
     def psd(self, fftlength, nperseg=256, overlap=0.5, window=('tukey', 0.25)):
         nwindow = signal.get_window(window, nperseg)
@@ -518,20 +537,15 @@ class GwTimeseries():
                      fftlength=fftlength, overlap=overlap, window=nwindow)
         return f, Pxx
 
-    def filter(self, frange, fftlength, nperseg=256, overlap=0.5, window=('tukey', 0.25), outlier_threshold=None):
+    def filter(self, frange, psd_val=None, outlier_threshold=None):
         if outlier_threshold is None:
             outliers = (60, 120, 180)
         else:
-            f, Pxx = self.psd(
-                fftlength=fftlength,
-                nperseg=nperseg,
-                overlap=overlap,
-                window=window)
-
+            f, Pxx = psd_val
             outliers = f[np.abs(Pxx - Pxx.mean()) > outlier_threshold * Pxx.std()]
 
         bp = bandpass(frange[0], frange[1], self._freq)
-        notches = [notch(line, self._freq) for line in outliers]
+        notches = [notch(f, self._freq) for f in outliers if f > 1.0 and f + 1 < self._freq / 2.0]
         zpk = concatenate_zpks(bp, *notches)
         self._ts = apply_filter(self._ts, *zpk)
 
@@ -567,7 +581,7 @@ class GwSpectrogram():
         self._freq = None
         self._value = None
 
-    def cqt(self, qrange, qmismatch, out_time_range, out_freq_range):
+    def cqt(self, out_time_range, out_freq_range, qrange=(4, 64), qmismatch=0.2):
         cqt_peak, cqt_tiles = qsearch(
             data=self._ts.value, sample_rate=self._ts.sample_rate,
             qrange=qrange, mismatch=qmismatch)
@@ -575,28 +589,41 @@ class GwSpectrogram():
         self._time, self._freq, self._value, q = interpolate_cqt_data(
             cqt_peak, out_time_range, out_freq_range)
 
-    def cwt(self, wavelete_name='shan0.5-2', prange=np.arange(1, 64)):
+    def cwt(self, out_time_range, out_freq_range, wavelete_name='shan0.5-2', prange=np.arange(1, 64)):
         scales = scg.periods2scales(prange)
         coefficients, self._freq = pywt.cwt(self._ts.value, scales, wavelete_name)
-        self._value = (abs(coefficients)) ** 2
+        self._freq *= self._ts.sample_rate
+        self._value = abs(coefficients) ** 2
         self._time = np.copy(self._ts.time)
 
-    def normalize(self, esp=1e-6, cqt_norm_minmax=None):
+        xout = np.arange(out_time_range[0], out_time_range[1], out_time_range[2])
+        fout = np.arange(out_freq_range[0], out_freq_range[1], out_freq_range[2])
+        interp = interp2d(self._time, self._freq, self._value, kind='cubic')
+        self._value = interp(xout, fout).astype(float, casting="same_kind", copy=False)
+        self._time = xout
+        self._freq = fout
+
+    def normalize(self, minmax=None, esp=1e-6):
         mean = self._value.mean()
         std = self._value.std()
 
-        qspectr = (self._value - mean) / (std + esp)
+        self._value = (self._value - mean) / (std + esp)
 
-        if cqt_norm_minmax is None:
-            qspectr_min, qspectr_max = qspectr.min(), qspectr.max()
+        if minmax is None:
+            qspectr_min, qspectr_max = self._value.min(), self._value.max()
         else:
-            qspectr_min, qspectr_max = cqt_norm_minmax
+            qspectr_min, qspectr_max = minmax
 
-        qspectr[qspectr < qspectr_min] = qspectr_min
-        qspectr[qspectr > qspectr_max] = qspectr_max
-        qspectr = 255 * (qspectr - qspectr_min) / (qspectr_max - qspectr_min)
-        qspectr = qspectr.astype(np.uint8)
-        self._value = np.flip(qspectr, 0)
+        self._value[self._value < qspectr_min] = qspectr_min
+        self._value[self._value > qspectr_max] = qspectr_max
+        self._value = 255 * (self._value - qspectr_min) / (qspectr_max - qspectr_min)
+        self._value = self._value.astype(np.uint8)
+        self._value = np.flip(self._value, 0)
+
+    def show_value(self):
+        plt.imshow(self._value, cmap=plt.cm.seismic, aspect='auto',
+                   vmax=self._value.max(), vmin=self._value.min())
+        plt.show()
 
     @property
     def value(self):
@@ -611,258 +638,58 @@ class GwSpectrogram():
         return self._freq
 
     @staticmethod
-    def save_img(fp, data, mode, size):
-        if isinstance(data, GwTimeseries):
+    def save(fp, data, mode='depth_stacked', size=None):
+        if isinstance(data, GwSpectrogram):
             result = data.value
         elif isinstance(data, list):
             result = []
             for d in data:
                 result.append(d.value)
 
-            if mode == 'vstacked':
+            if mode == 'vert_stacked':
                 result = np.vstack(result)
-            elif mode == 'dstacked':
-                res_img = np.zeros([result[0].shape[0], result[0].shape[1], 3], dtype=np.uint8)
+            elif mode == 'depth_stacked':
+                res_img = np.zeros([result[0].shape[0], result[0].shape[1], len(result)], dtype=np.uint8)
                 for i, v in enumerate(result):
                     res_img[:, :, i] = v
                 result = res_img
         else:
             raise ValueError('unexpected type of spectrogram data')
 
-        img = Image.fromarray(result)
-        if size is not None:
-            img = img.resize(size)
-        img.save(fp)
-
-def qpipline(data, sample_rate,
-             ww_fftlength, ww_nperseg=256, ww_overlap=0.5, ww_window=('tukey', 0.25),
-             frange=(20, 512), qrange=(16, 32), qmismatch=0.2, outlier_threshold=3.0,
-             out_time_range=(0, 1, 1e-2), out_freq_range=(20, 512, 1)):
-    whitened = whiten(
-        data=data, sample_rate=sample_rate,
-        fftlength=ww_fftlength, nperseg=ww_nperseg,
-        overlap=ww_overlap, window=ww_window)
-
-    psd_window = signal.windows.tukey(ww_nperseg, alpha=0.25)
-    f, Pxx = psd(data=data, sample_rate=sample_rate,
-                 fftlength=ww_fftlength, overlap=ww_overlap, window=psd_window)
-
-    if outlier_threshold is None:
-        outliers = (60, 120, 180)
-    else:
-        outliers = f[np.abs(Pxx - Pxx.mean()) > outlier_threshold * Pxx.std()]
-
-    bp = bandpass(frange[0], frange[1], sample_rate)
-    notches = [notch(line, sample_rate) for line in outliers]
-    zpk = concatenate_zpks(bp, *notches)
-    filtered = apply_filter(whitened, *zpk)
-
-    N = len(filtered)
-    dt = 1.0 / sample_rate
-    time = np.arange(0, N) * dt
-    scales = scg.periods2scales(np.arange(1, 40))
-    # scales = np.arange(1, 2096)
-    plot_wavelet(time, filtered, scales)
-
-    cqt_peak, cqt_tiles = qsearch(
-        data=filtered, sample_rate=sample_rate,
-        qrange=qrange, mismatch=qmismatch)
-
-    xout, fout, qspectr, q = interpolate_cqt_data(cqt_peak, out_time_range, out_freq_range)
-    return xout, fout, qspectr, q
-
-
-def normalize_cqt_image(qspectr, esp=1e-6, cqt_norm_minmax=None):
-    mean = qspectr.mean()
-    std = qspectr.std()
-
-    qspectr = (qspectr - mean) / (std + esp)
-
-    # print(np.median(qspectr), np.mean(qspectr), np.std(qspectr),
-    #       np.min(qspectr), np.max(qspectr))
-
-    if cqt_norm_minmax is None:
-        qspectr_min, qspectr_max = qspectr.min(), qspectr.max()
-    else:
-        qspectr_min, qspectr_max = cqt_norm_minmax
-
-    qspectr[qspectr < qspectr_min] = qspectr_min
-    qspectr[qspectr > qspectr_max] = qspectr_max
-    qspectr = 255 * (qspectr - qspectr_min) / (qspectr_max - qspectr_min)
-    qspectr = qspectr.astype(np.uint8)
-    return np.flip(qspectr, 0)
-
-
-def qpipline_worker(
-        cqt_dict, data, data_label, sample_rate, ww_fftlength, ww_nperseg, ww_overlap, ww_window,
-        frange, qrange, qmismatch, outlier_threshold, out_time_range,
-        out_freq_range, esp, cqt_norm_minmax):
-    duration = data.size / sample_rate
-    if ww_fftlength is None:
-        ww_fftlength = duration
-
-    if ww_fftlength > duration:
-        ww_fftlength = duration
-
-    xout, fout, qspectr, q = qpipline(
-        data=data, sample_rate=sample_rate, ww_fftlength=ww_fftlength,
-        ww_window=ww_window, ww_nperseg=ww_nperseg, ww_overlap=ww_overlap,
-        frange=frange, qrange=qrange, qmismatch=qmismatch,
-        outlier_threshold=outlier_threshold, out_time_range=out_time_range,
-        out_freq_range=out_freq_range)
-
-    qspectr = normalize_cqt_image(qspectr, esp, cqt_norm_minmax)
-    cqt_dict[data_label] = qspectr
-
-
-def load_timeseries(fp):
-    filename, file_extension = os.path.splitext(fp)
-    if file_extension in ['.npy']:
-        return np.load(fp)
-    elif file_extension in ['.hdf5']:
-        with h5py.File(fp, 'r') as f:
-            d = f['strain']['Strain']
-            return d[:].reshape((1, d.size))
-    raise ValueError('unexpected timeseries file extension, use .npy or .hdf5 files')
-
-
-def plot_timeseries(y, x=None, gtype='scatter', legend=None):
-    if y.shape[0] == y.size:
-        y = np.reshape(y, (1, y.size))
-
-    if legend is None:
-        legend = list(range(y.shape[0]))
-
-    for i, array in enumerate(y):
-        if x is None:
-            x = list(range(y.shape[1]))
-        if gtype == 'scatter':
-            plt.scatter(x, array, label=legend[i])
-        elif gtype == 'line':
-            plt.plot(x, array, label=legend[i])
-    plt.legend()
-
-
-def crop_timeseries(data, range):
-    if range is not None:
-        return data[:, range]
-    return data
-
-
-def create_cqt_image(
-        fname, sample_rate,
-        ww_fftlength=None, ww_nperseg=256, ww_overlap=0.25, ww_window=('tukey', 0.25),
-        frange=(30, 400), qrange=(4, 64), qmismatch=0.05, outlier_threshold=3.0,
-        out_time_range=(0, 2, 1e-3), out_freq_range=(30, 400, 1),
-        esp=1e-6, mode='vstacked', input_time_range=None, cqt_norm_minmax=None, multiprocss=True):
-    data = load_timeseries(fname)
-    data = crop_timeseries(data, input_time_range)
-
-    if multiprocss:
-        manager = multiprocessing.Manager()
-        cqt_dict = manager.dict()
-
-        jobs = []
-        for i, d in enumerate(data):
-            data_label = str(i)
-            p = multiprocessing.Process(
-                target=qpipline_worker,
-                args=(cqt_dict, d, data_label, sample_rate, ww_fftlength, ww_nperseg, ww_overlap,
-                      ww_window, frange, qrange, qmismatch, outlier_threshold,
-                      out_time_range, out_freq_range, esp, cqt_norm_minmax))
-            jobs.append(p)
-            p.start()
-
-        for proc in jobs:
-            proc.join()
-    else:
-        cqt_dict = {}
-        for i, d in enumerate(data):
-            data_label = str(i)
-            qpipline_worker(cqt_dict, d, data_label, sample_rate, ww_fftlength, ww_nperseg, ww_overlap,
-                          ww_window, frange, qrange, qmismatch, outlier_threshold,
-                          out_time_range, out_freq_range, esp, cqt_norm_minmax)
-
-    result = []
-    for i, d in enumerate(data):
-        data_label = str(i)
-        result.append(cqt_dict[data_label])
-
-    if mode == 'vstacked':
-        result = np.vstack(result)
-    elif mode == 'channels':
-        res_img = np.zeros([result[0].shape[0], result[0].shape[1], 3], dtype=np.uint8)
-        for i, v in enumerate(result):
-            res_img[:, :, i] = v
-        result = res_img
-    return Image.fromarray(result)
-
-
-def save_cqt_image(im, fname, size=None):
-    if size is not None:
-        im = im.resize(size)
-    im.save(fname)
-
-
-def plot_wavelet(time, signal, scales, waveletname='cmor1.5-1.0', cmap=plt.cm.seismic,
-                 title='Wavelet Transform (Power Spectrum) of signal',
-                 ylabel='Period (years)', xlabel='Time', figname=None):
-    # dt = time[1] - time[0]
-    # [coefficients, frequencies] = pywt.cwt(signal, scales, waveletname, dt)
-    # power = (abs(coefficients)) ** 2
-    # plt_spec = plt.imshow(
-    #     power.real, origin='upper',
-    #     cmap=plt.cm.seismic, aspect='auto')
-    # plt.yscale('log')
-    # plt.show()
-    # scg.set_default_wavelet('cmor1-1.5')
-    # scg.set_default_wavelet('cgau5')
-    # scg.set_default_wavelet('cgau1')
-    scg.set_default_wavelet('shan0.5-2')
-    # scg.set_default_wavelet('mexh')
-    scales = scg.periods2scales(np.arange(1, 64, 1))
-    s = signal-np.mean(signal)
-    # s = signal - np.median(signal)
-    ax = scg.cws(time, signal=s, scales=scales, figsize=(6.9,2.9), clim=(0, 5))
-    plt.show()
+        filename, file_extension = os.path.splitext(fp)
+        if file_extension in ['.npy']:
+            np.save(result)
+        elif file_extension in ['.png']:
+            img = Image.fromarray(result)
+            if size is not None:
+                img = img.resize(size)
+            img.save(fp)
+        else:
+            raise ValueError('invalid file extension, use .png or .npy')
 
 
 if __name__ == '__main__':
-    fname = './000a5b6e5c.npy'
-    h, l, v = load_timeseries(fname)
-    tsn = v
-    sample_rate = 2048
-    duration = tsn.size / sample_rate
-    out_time_range = (0, 4, 1 / sample_rate)
-    out_freq_range = (30, 400, 1)
-    spec_cmap = 'plasma'
+    fname = './111012cee3.npy'
+    OUT_PATH = './data/tmp/train/'
 
-    # xout, fout, qspectr, q = qpipline(
-    #     data=tsn, sample_rate=sample_rate, ww_fftlength=duration,
-    #     ww_nperseg=256, ww_overlap=0.25, frange=(30, 400), qrange=(4, 64),
-    #     qmismatch=0.05, outlier_threshold=3.0,
-    #     out_time_range=out_time_range, out_freq_range=out_freq_range)
-    #
-    # plt.figure(figsize=(12, 12))
-    # plot_spectrogram(qspectr, fout, xout,
-    #                  spec_cmap=spec_cmap, interpolation=None,
-    #                  label=f'Q={str(round(q, 1))}')
-    # # plt.yscale('log')
-    # plt.show()
+    for i in range(100):
+        tss = GwTimeseries.load(fname, 2048)
+        sps = []
 
-    TRAIN_CQT_PATH = './data/tmp/train/'
-    os.makedirs(TRAIN_CQT_PATH, exist_ok=True)
+        for ts in tss:
+            f, Pxx = ts.psd(fftlength=ts.duration, nperseg=2048, overlap=0.75, window=('tukey', 0.5))
+            ts.apply_window(window=('tukey', 0.1))
+            ts.whiten(psd_val=(f, Pxx))
+            ts.filter(frange=(50, 250),
+                      psd_val=(f, Pxx),
+                      outlier_threshold=3.0)
+            sp = GwSpectrogram(ts)
+            # sp.cwt(out_time_range=(0, ts.duration, 1e-2), out_freq_range=(50, 500, 1), prange=np.arange(1, 64, 0.5))
+            sp.cqt(out_time_range=(0, ts.duration, 1e-2), out_freq_range=(50, 250, 5), qrange=(1, 64), qmismatch=0.05)
+            sp.normalize()
+            # sp.show_value()
+            sps.append(sp)
 
-    for i in range(1):
-        fname = './00001f4945.npy' # './H-H1_LOSC_4_V1-1126256640-4096.hdf5'
-        sample_rate = 2048
-        duration = 2.0
-        img = create_cqt_image(
-            fname, sample_rate=sample_rate, ww_fftlength=duration,
-            ww_nperseg=2048, ww_overlap=0.75, ww_window=('tukey', 0.15),
-            frange=(35, 350), qrange=(4, 32), qmismatch=0.2, outlier_threshold=3.0,
-            out_time_range=(0, duration, 1e-2), out_freq_range=(35, 512, 1),
-            mode='vstacked', input_time_range=None, cqt_norm_minmax=(-1, 20), multiprocss=True)
-        # img.resize((512, 512)).show()
-        save_cqt_image(img, TRAIN_CQT_PATH + '000a5b6e5c.png', size=(512, 512))
+        GwTimeseries.save(OUT_PATH + fname, tss)
+        GwSpectrogram.save(OUT_PATH + '111012cee3.png', sps, mode='depth_stacked', size=(512, 512))
         print(i)
