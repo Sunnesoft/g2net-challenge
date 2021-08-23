@@ -7,6 +7,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import math
+import pandas as pd
 
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Conv2D
@@ -41,10 +42,11 @@ class GwModelBase:
                  name: str,
                  mode: Literal[TfDevice.TPU, TfDevice.GPU, TfDevice.TPU],
                  image_size: Tuple[int, int, int],
-                 image_scale_factor: Union[None, float] = None):
+                 image_scale_factor: Union[None, float] = None,
+                 model_path: str= ''):
         self._mode = mode
         self._name = name
-        self._model_fn = f'{self._name}.h5'
+        self._model_path = model_path
 
         if self._mode == TfDevice.TPU:
             try:
@@ -94,17 +96,13 @@ class GwModelBase:
                 valid_fn, batch_size=batch_size, shuffle=shuffle,
                 image_size=self._image_size[0:2], image_scale=self._image_scale_factor)
 
-    def load_test_dataset(
-            self,
-            data_path,
-            shuffle=2048,
-            batch_size=64):
+    def load_test_dataset(self, data_path, batch_size=64):
         test_fn = gwds.load_filenames(data_path)
 
         if len(test_fn) > 0.0:
             self._dataset_test = gwds.get_dataset(
-                test_fn, labeled=False, batch_size=batch_size,
-                shuffle=shuffle, image_size=self._image_size[0:2], image_scale=self._image_scale_factor)
+                test_fn, labeled=False, linked=True, batch_size=batch_size,
+                shuffle=None, image_size=self._image_size[0:2], image_scale=self._image_scale_factor)
 
     def compile(self, **kwargs):
         with self._strategy.scope():
@@ -113,8 +111,8 @@ class GwModelBase:
     def make_model(self, **kwargs):
         raise NotImplementedError('make_model() procedure must be implemented in GwModelBase class child')
 
-    def load_model(self, path):
-        self._model.load_weights(os.path.join(path, self._model_fn))
+    def load_model(self):
+        self._model.load_weights(self.model_fullpath)
 
     def print_model(self):
         print(self._model.summary())
@@ -122,7 +120,7 @@ class GwModelBase:
     def fit(self, **kwargs):
         if 'callbacks' not in kwargs:
             checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(
-                self._model_fn, save_best_only=True
+                self.model_fullpath, save_best_only=True
             )
             early_stopping_cb = tf.keras.callbacks.EarlyStopping(
                 patience=10, restore_best_weights=True
@@ -138,8 +136,21 @@ class GwModelBase:
         return self._history
 
     def predict(self, **kwargs) -> np.ndarray:
-        kwargs.setdefault('x', self._dataset_test)
+        kwargs.setdefault('x', self._dataset_test.map(lambda x, r: x))
         return self._model.predict(**kwargs)
+
+    def _test_dataset_refs(self):
+        return list(self._dataset_test.map(lambda x, r: r).as_numpy_iterator())
+
+    def infer_test_dataset(self):
+        result = self.predict()
+        links = self._test_dataset_refs()
+
+        df = pd.DataFrame(columns=['id', 'target'])
+        df['id'] = links
+        df['target'] = result
+        os.makedirs(os.path.dirname(self.infer_filename), exist_ok=True)
+        df.to_csv(path_or_buf=self.infer_filename, index=False)
 
     def show_random_train_batch(self, subs=None):
         image_batch, label_batch = next(iter(self._dataset_train))
@@ -151,6 +162,22 @@ class GwModelBase:
         image_batch = next(iter(self._dataset_test))
         label_batch = self.predict(x=image_batch)
         show_batch(image_batch, label_batch)
+
+    @property
+    def model_filename(self):
+        return f'{self._name}.h5'
+
+    @property
+    def infer_filename(self):
+        return f'{self._name}.csv'
+
+    @property
+    def model_fullpath(self):
+        return os.path.join(self._model_path, self.model_filename)
+
+    @property
+    def infer_fullpath(self):
+        return os.path.join(self._model_path, self.infer_filename)
 
 
 class GwXception(GwModelBase):
@@ -217,6 +244,16 @@ class GwEfficientNetB0(GwModelBase):
 
         return model
 
+    def show_hist(self):
+        plt.clf()
+        plt.plot(self._history["auc"])
+        plt.plot(self._history["val_auc"])
+        plt.title("model accuracy")
+        plt.ylabel("accuracy")
+        plt.xlabel("epoch")
+        plt.legend(["train", "validation"], loc="upper left")
+        plt.show()
+
 
 class GwLeNet(GwModelBase):
     def make_model(self, optimizer, loss, metrics, **kwargs):
@@ -260,4 +297,6 @@ if __name__ == '__main__':
 
     solver.compile()
     solver.print_model()
+
+
     history = solver.fit(epochs=20)

@@ -45,7 +45,13 @@ def open_image(filename):
     return open(filename, 'rb').read()
 
 
-def read_tfrecord(example, labeled, image_size, image_scale):
+def get_image_name(filename):
+    bn = os.path.basename(filename)
+    name, file_extension = os.path.splitext(bn)
+    return name
+
+
+def read_tfrecord(example, labeled, linked, image_size, image_scale):
     tfrecord_format = (
         {
             'height': tf.io.FixedLenFeature([], tf.int64),
@@ -53,6 +59,7 @@ def read_tfrecord(example, labeled, image_size, image_scale):
             'depth': tf.io.FixedLenFeature([], tf.int64),
             'target': tf.io.FixedLenFeature([], tf.int64),
             'image_raw': tf.io.FixedLenFeature([], tf.string),
+            'filename': tf.io.FixedLenFeature([], tf.string),
         }
         if labeled
         else {
@@ -60,17 +67,27 @@ def read_tfrecord(example, labeled, image_size, image_scale):
             'width': tf.io.FixedLenFeature([], tf.int64),
             'depth': tf.io.FixedLenFeature([], tf.int64),
             'image_raw': tf.io.FixedLenFeature([], tf.string),
+            'filename': tf.io.FixedLenFeature([], tf.string),
         }
     )
     example = tf.io.parse_single_example(example, tfrecord_format)
     image = decode_image(example, size=image_size, scale=image_scale)
     if labeled:
         label = tf.cast(example["target"], tf.int32)
+        if linked:
+            reference = tf.cast(example["filename"], tf.string)
+            return image, label, reference
         return image, label
+
+    if linked:
+        reference = tf.cast(example["filename"], tf.string)
+        return image, reference
+
     return image
 
 
-def write_tfrecord(writer, image, label, image_size):
+def write_tfrecord(writer, filename, label, image_size):
+    image = open_image(filename)
     dimage = tf.image.decode_png(image)
 
     if image_size is not None and image_size[0:2] != dimage.shape[0:2]:
@@ -83,7 +100,8 @@ def write_tfrecord(writer, image, label, image_size):
         'height': _int64_feature(image_shape[0]),
         'width': _int64_feature(image_shape[1]),
         'depth': _int64_feature(image_shape[2]),
-        'image_raw': _bytes_feature(image)
+        'image_raw': _bytes_feature(image),
+        'filename': _bytes_feature(get_image_name(filename)),
     }
 
     if label is not None:
@@ -170,13 +188,13 @@ def create_tfrecords(
                 for task in batched_tasks:
                     filename, label = task
                     try:
-                        write_tfrecord(writer, open_image(filename), label, image_size)
+                        write_tfrecord(writer, filename, label, image_size)
                     except:
                         print(f'Skip invalid file {filename}')
                         continue
 
 
-def load_dataset(filenames, labeled=True, image_size=None, image_scale=None):
+def load_dataset(filenames, labeled=True, linked=False, image_size=None, image_scale=None):
     ignore_order = tf.data.Options()
     ignore_order.experimental_deterministic = False  # disable order, increase speed
     dataset = tf.data.TFRecordDataset(
@@ -188,6 +206,7 @@ def load_dataset(filenames, labeled=True, image_size=None, image_scale=None):
     dataset = dataset.map(
         partial(read_tfrecord,
                 labeled=labeled,
+                linked=linked,
                 image_size=image_size,
                 image_scale=image_scale), num_parallel_calls=AUTOTUNE
     )
@@ -209,10 +228,15 @@ def load_filenames(path, split=None):
     return res
 
 
-def get_dataset(filenames, labeled=True, shuffle=2048, batch_size=64,
+def get_dataset(filenames, labeled=True, linked=False,
+                shuffle=2048, batch_size=64,
                 image_size=None, image_scale=None):
-    dataset = load_dataset(filenames, labeled=labeled)
-    dataset = dataset.shuffle(shuffle)
+    dataset = load_dataset(filenames, labeled=labeled, linked=linked,
+                           image_size=image_size, image_scale=image_scale)
+
+    if shuffle is not None:
+        dataset = dataset.shuffle(shuffle)
+
     dataset = dataset.prefetch(buffer_size=AUTOTUNE)
     dataset = dataset.batch(batch_size)
     return dataset
@@ -220,7 +244,7 @@ def get_dataset(filenames, labeled=True, shuffle=2048, batch_size=64,
 
 if __name__ == '__main__':
     fpath = './data/cqt/train/'
-    labels_fn = './training_labels.csv'
+    labels_fn = './data/test/training_labels.csv'
     out_path = './data/tfrecords/'
     out_task = {}
     out_task[out_path] = 100
