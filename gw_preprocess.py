@@ -11,10 +11,9 @@ import math
 import h5py
 import os
 import pywt
-import scaleogram as scg
-
 import numpy as np
 import matplotlib.pyplot as plt
+import scaleogram as scg
 
 
 def _as_float(x):
@@ -658,7 +657,7 @@ class GwSpectrogram():
 
         filename, file_extension = os.path.splitext(fp)
         if file_extension in ['.npy']:
-            np.save(result)
+            np.save(fp, result)
         elif file_extension in ['.png']:
             img = Image.fromarray(result)
             if size is not None:
@@ -672,7 +671,7 @@ if __name__ == '__main__':
     fname = './111012cee3.npy'
     OUT_PATH = './data/tmp/train/'
 
-    for i in range(100):
+    for i in range(1):
         tss = GwTimeseries.load(fname, 2048)
         sps = []
 
@@ -685,11 +684,11 @@ if __name__ == '__main__':
                       outlier_threshold=3.0)
             sp = GwSpectrogram(ts)
             # sp.cwt(out_time_range=(0, ts.duration, 1e-2), out_freq_range=(50, 500, 1), prange=np.arange(1, 64, 0.5))
-            sp.cqt(out_time_range=(0, ts.duration, 1e-2), out_freq_range=(50, 250, 5), qrange=(1, 64), qmismatch=0.05)
+            sp.cqt(out_time_range=(0, ts.duration, 1e-2), out_freq_range=(50, 250, 1), qrange=(1, 64), qmismatch=0.05)
             sp.normalize()
             # sp.show_value()
             sps.append(sp)
 
-        GwTimeseries.save(OUT_PATH + fname, tss)
+        # GwTimeseries.save(OUT_PATH + fname, tss)
         GwSpectrogram.save(OUT_PATH + '111012cee3.png', sps, mode='depth_stacked', size=(512, 512))
         print(i)
