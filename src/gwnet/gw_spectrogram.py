@@ -7,7 +7,6 @@ from PIL import Image
 from scipy.interpolate import interp2d
 
 from . import gw_utils as gwu
-from . import gw_timeseries as gwts
 
 
 class GwSpectrogram:
