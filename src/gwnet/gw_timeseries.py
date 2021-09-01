@@ -129,9 +129,10 @@ class GwTimeseries:
 if __name__ == '__main__':
     import time
     import timeit
+    from gw_cqt_gpu import CQT
 
-    fname = './data/test/000a5b6e5c.npy'
-    OUT_PATH = './data/tmp/train/'
+    fname = './data/tests/000a5b6e5c.npy'
+    OUT_PATH = '../../data/tmp/train/'
 
     # tf.config.run_functions_eagerly(True)
 
@@ -139,10 +140,11 @@ if __name__ == '__main__':
     dev = tf.config.list_logical_devices('GPU')
     strategy = tf.distribute.MirroredStrategy(dev)
 
-    cqt = gwu.CQTv(2048, (4, 64), 0.05, time_range=(0, 2.0, 1e-2), freq_range=(50, 250, 1))
+    cqt = CQT(2048, (4, 64), 0.05, time_range=(0, 2.0, 1e-2), freq_range=(50, 250, 1))
 
-    filtered = []
-    for i in range(30):
+    ts_batch = []
+    fn_batch = []
+    for i in range(80):
         tss = GwTimeseries.load(fname, 2048)
         sps = []
         for ts in tss:
@@ -152,21 +154,17 @@ if __name__ == '__main__':
             ts.filter(frange=(50, 250),
                       psd_val=(f, Pxx),
                       outlier_threshold=3.0)
-            # sps.append(ts.value)
-            filtered.append(ts.value)
+            sps.append(ts.value)
+        ts_batch.append(sps)
+        fn_batch.append(os.path.splitext(os.path.basename(fname))[0] + '.png')
 
-    filtered = np.array(filtered)
+    ts_batch = np.array(ts_batch)
 
     with strategy.scope():
         start = time.time()
-        # q = cqt.test2(filtered)
-        # print(v)
-        # a = cqt.test3(filtered, q)
-        # b = cqt.interpolate(a, time_range=(0, 2.0, 1e-2), freq_range=(50, 250, 1))
-        # v = cqt.calc(filtered)
-        data = cqt.transform(filtered)
-        iii = cqt.interpolate(data)
-        print(type(iii[0]))
+        data = cqt.transform(ts_batch)
+        cqt_batch = cqt.interpolate(data)
+        cqt.save(fn_batch, cqt_batch)
         end = time.time()
         print("tf.Tensor time elapsed: ", (end - start))
 
@@ -224,7 +222,7 @@ if __name__ == '__main__':
     #         tss = GwTimeseries.load(fname, 2048)
     #         sps = []
     #
-    #         v = gwu.test(tss)
+    #         v = gwu.tests(tss)
     #         print(v)
     #
     #         for ts in tss:

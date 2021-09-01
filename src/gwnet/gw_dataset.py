@@ -243,8 +243,8 @@ def get_dataset(filenames, labeled=True, linked=False,
 
 if __name__ == '__main__':
     fpath = './data/cqt/train/'
-    labels_fn = './data/test/training_labels.csv'
-    out_path = './data/tfrecords/'
+    labels_fn = './data/tests/training_labels.csv'
+    out_path = '../../data/tfrecords/'
     out_task = {}
     out_task[out_path] = 100
 

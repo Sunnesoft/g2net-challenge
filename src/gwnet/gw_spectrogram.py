@@ -105,8 +105,8 @@ class GwSpectrogram:
 
 
 if __name__ == '__main__':
-    fname = './data/test/111012cee3.npy'
-    OUT_PATH = './data/tmp/train/'
+    fname = './data/tests/111012cee3.npy'
+    OUT_PATH = '../../data/tmp/train/'
 
     for i in range(1):
         tss = gwts.GwTimeseries.load(fname, 2048)

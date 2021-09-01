@@ -1,8 +1,8 @@
 import gw_dataset as gwds
+from gw_device_manager import TfDevice, init_processing_device
 
 import tensorflow as tf
 from typing import Literal, Tuple, Union
-from enum import Enum
 import os
 import matplotlib.pyplot as plt
 import numpy as np
@@ -15,12 +15,6 @@ from tensorflow.keras.layers import MaxPooling2D
 from tensorflow.keras.layers import Activation
 from tensorflow.keras.layers import Flatten
 from tensorflow.keras.layers import Dense
-
-
-class TfDevice(Enum):
-    CPU = 'CPU'
-    GPU = 'GPU'
-    TPU = 'TPU'
 
 
 def show_batch(image_batch, label_batch):
@@ -48,25 +42,7 @@ class GwModelBase:
         self._name = name
         self._model_path = model_path
 
-        if self._mode == TfDevice.TPU:
-            try:
-                tpu = tf.distribute.cluster_resolver.TPUClusterResolver()
-                tf.config.experimental_connect_to_cluster(tpu)
-                tf.tpu.experimental.initialize_tpu_system(tpu)
-                self._strategy = tf.distribute.TPUStrategy(tpu)
-                print("Device:", tpu.master())
-            except:
-                tf.debugging.set_log_device_placement(True)
-                dev = tf.config.list_logical_devices(self._mode.value)
-                self._strategy = tf.distribute.MirroredStrategy(dev)
-                print("Devices:", dev)
-        else:
-            tf.debugging.set_log_device_placement(True)
-            dev = tf.config.list_logical_devices(self._mode.value)
-            self._strategy = tf.distribute.MirroredStrategy(dev)
-            print("Devices:", dev)
-
-        print("Number of replicas:", self._strategy.num_replicas_in_sync)
+        self._strategy = init_processing_device(self._mode)
 
         self._dataset_train = None
         self._dataset_valid = None
@@ -285,7 +261,7 @@ class GwLeNet(GwModelBase):
 
 
 if __name__ == '__main__':
-    data_path = './data/tfrecords/'
+    data_path = '../../data/tfrecords/'
 
     optimizer = 'adam'
     loss = 'binary_crossentropy'
