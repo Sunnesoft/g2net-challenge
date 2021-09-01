@@ -1,6 +1,10 @@
 import tensorflow as tf
 from enum import Enum
-from typing import Literal
+
+try:
+    from typing import Literal
+except ImportError:
+    from typing_extensions import Literal
 
 
 class TfDevice(Enum):

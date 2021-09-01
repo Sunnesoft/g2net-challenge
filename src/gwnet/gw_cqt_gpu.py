@@ -7,7 +7,11 @@ import time
 
 from scipy.interpolate import interp2d
 from PIL import Image
-from typing import Literal
+
+try:
+    from typing import Literal
+except ImportError:
+    from typing_extensions import Literal
 
 from .gw_device_manager import TfDevice, init_processing_device
 from .gw_timeseries import GwTimeseries

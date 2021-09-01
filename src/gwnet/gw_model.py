@@ -1,5 +1,11 @@
 import tensorflow as tf
-from typing import Literal, Tuple, Union
+
+try:
+    from typing import Literal
+except ImportError:
+    from typing_extensions import Literal
+
+from typing import Tuple, Union
 import os
 import matplotlib.pyplot as plt
 import numpy as np
