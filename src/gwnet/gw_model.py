@@ -1,6 +1,3 @@
-import gw_dataset as gwds
-from gw_device_manager import TfDevice, init_processing_device
-
 import tensorflow as tf
 from typing import Literal, Tuple, Union
 import os
@@ -15,6 +12,9 @@ from tensorflow.keras.layers import MaxPooling2D
 from tensorflow.keras.layers import Activation
 from tensorflow.keras.layers import Flatten
 from tensorflow.keras.layers import Dense
+
+from .gw_dataset import load_filenames, get_dataset
+from .gw_device_manager import TfDevice, init_processing_device
 
 
 def show_batch(image_batch, label_batch):
@@ -59,24 +59,24 @@ class GwModelBase:
             valid_dataset_volume: float = 0.1,
             shuffle=2048,
             batch_size=64):
-        train_fn, valid_fn = gwds.load_filenames(
+        train_fn, valid_fn = load_filenames(
             data_path, split=(train_dataset_volume, valid_dataset_volume))
 
         if len(train_fn) > 0.0:
-            self._dataset_train = gwds.get_dataset(
+            self._dataset_train = get_dataset(
                 train_fn, batch_size=batch_size, shuffle=shuffle,
                 image_size=self._image_size[0:2], image_scale=self._image_scale_factor)
 
         if len(valid_fn) > 0.0:
-            self._dataset_valid = gwds.get_dataset(
+            self._dataset_valid = get_dataset(
                 valid_fn, batch_size=batch_size, shuffle=shuffle,
                 image_size=self._image_size[0:2], image_scale=self._image_scale_factor)
 
     def load_test_dataset(self, data_path, batch_size=64):
-        test_fn = gwds.load_filenames(data_path)
+        test_fn = load_filenames(data_path)
 
         if len(test_fn) > 0.0:
-            self._dataset_test = gwds.get_dataset(
+            self._dataset_test = get_dataset(
                 test_fn, labeled=False, linked=True, batch_size=batch_size,
                 shuffle=None, image_size=self._image_size[0:2], image_scale=self._image_scale_factor)
 
@@ -258,21 +258,3 @@ class GwLeNet(GwModelBase):
         )
 
         return model
-
-
-if __name__ == '__main__':
-    data_path = '../../data/tfrecords/'
-
-    optimizer = 'adam'
-    loss = 'binary_crossentropy'
-    metrics = ['AUC']
-
-    solver = GwEfficientNetB0('eff_net_b0', TfDevice.CPU, (71, 71, 1), 255.0)
-    solver.load_train_dataset(data_path, batch_size=64)
-    solver.show_random_train_batch(subs={'1': 'GW_TRUE', '0': 'GW_FALSE'})
-
-    solver.compile()
-    solver.print_model()
-
-
-    history = solver.fit(epochs=20)

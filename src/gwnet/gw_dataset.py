@@ -239,15 +239,3 @@ def get_dataset(filenames, labeled=True, linked=False,
     dataset = dataset.prefetch(buffer_size=AUTOTUNE)
     dataset = dataset.batch(batch_size)
     return dataset
-
-
-if __name__ == '__main__':
-    fpath = './data/cqt/train/'
-    labels_fn = './data/tests/training_labels.csv'
-    out_path = '../../data/tfrecords/'
-    out_task = {}
-    out_task[out_path] = 100
-
-    create_tfrecords(fpath, out_task, labels_fn,
-                     shuffle=True, batch_size=1024, remove_older=True,
-                     image_size=(71, 71))

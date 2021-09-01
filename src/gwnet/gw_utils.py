@@ -1,6 +1,6 @@
 import math
 import operator
-from functools import reduce, partial
+from functools import reduce
 from typing import Union, Tuple
 
 import matplotlib.pyplot as plt

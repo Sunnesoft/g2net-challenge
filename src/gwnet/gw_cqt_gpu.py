@@ -1,14 +1,16 @@
 import tensorflow as tf
 import numpy as np
 import math
-from scipy.interpolate import interp2d
-from gw_device_manager import TfDevice, init_processing_device
 import os
+import random
+import time
+
+from scipy.interpolate import interp2d
 from PIL import Image
 from typing import Literal
-import random
-from gw_timeseries import GwTimeseries
-import time
+
+from .gw_device_manager import TfDevice, init_processing_device
+from .gw_timeseries import GwTimeseries
 
 
 class CQT:
@@ -332,16 +334,3 @@ class CQTProcessor:
                     print(f'Batch {index} processed during {end - start}s.')
 
                 index += 1
-
-
-if __name__ == '__main__':
-    input_path = '../../data/test/'
-    output_path = '../../data/tmp/train/'
-
-    proc = CQTProcessor(mode=TfDevice.GPU)
-    print(proc.scan_directory(input_path))
-    proc.run(
-        batch_size=1024, out_path=output_path, sample_rate=2048,
-        qrange=(4, 64), mismatch=0.05, time_range=(0, 2.0, 1e-2),
-        freq_range=(50, 250, 1), img_size=(512, 512), shuffle_tasks=True, verbose=True
-    )
