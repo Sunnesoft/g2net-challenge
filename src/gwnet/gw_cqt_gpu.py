@@ -289,10 +289,14 @@ class CQTProcessor:
 
         return dict(path=path, files_count=len(self._task))
 
-    def _crop_tasks_batch(self, n=1):
+    def _crop_tasks_batch(self, batch_size=1):
         task_count = len(self._task)
-        for ndx in range(0, task_count, n):
-            yield self._task[ndx:min(ndx + n, task_count)]
+        for ndx in range(0, task_count, batch_size):
+            yield self._task[ndx:min(ndx + batch_size, task_count)]
+
+    def _batches_count(self, batch_size):
+        task_count = len(self._task)
+        return math.ceil(task_count / batch_size)
 
     def _shuffle_tasks(self):
         random.shuffle(self._task)
@@ -312,6 +316,7 @@ class CQTProcessor:
                 freq_range=freq_range)
 
             index = 0
+            batches_count = self._batches_count(batch_size)
             for tasks in self._crop_tasks_batch(batch_size):
                 start = time.time()
 
@@ -335,6 +340,6 @@ class CQTProcessor:
 
                 if verbose:
                     end = time.time()
-                    print(f'Batch {index} processed during {end - start}s.')
+                    print(f'Batch {index}/{batches_count} processed during {end - start}s.')
 
                 index += 1
