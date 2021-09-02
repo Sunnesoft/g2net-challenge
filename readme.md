@@ -22,7 +22,7 @@ To keep results [Google Drive](https://drive.google.com/) is used.
 1. [The Kaggle dataset preprocessing with whiten, bandpass and notch filters](https://github.com/Sunnesoft/g2net-challenge/blob/main/examples/gw_create_filtered.ipynb).
 2. Create constant Q-transform spectrograms from filtered dataset:
    1. [Slow numpy realisation](https://github.com/Sunnesoft/g2net-challenge/blob/main/examples/gw_create_cqt.ipynb).
-   2. [Faster GPU/TPU realisation](https://github.com/Sunnesoft/g2net-challenge/blob/main/examples/gw_create_cqt_gpu.ipynb).
+   2. [Faster CPU realisation](https://github.com/Sunnesoft/g2net-challenge/blob/main/examples/gw_create_cqt_gpu.ipynb).
 3. Prepare dataset for NN classification:
    1. [Train dataset](https://github.com/Sunnesoft/g2net-challenge/blob/main/examples/gw_prepare_train_dataset.ipynb).
    2. [Test dataset](https://github.com/Sunnesoft/g2net-challenge/blob/main/examples/gw_prepare_test_dataset.ipynb).
