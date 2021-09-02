@@ -7,7 +7,7 @@ if __name__ == '__main__':
 
     tf.debugging.set_log_device_placement(False)
 
-    proc = CQTProcessor(mode=TfDevice.CPU)
+    proc = CQTProcessor(mode=TfDevice.CPU, multidevice_strategy=True)
     print(proc.scan_directory(input_path, output_path, reject_if_exists=False, imitate_loaded=100))
     proc.run(
         batch_size=1024, out_path=output_path, sample_rate=2048,

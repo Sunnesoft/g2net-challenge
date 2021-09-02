@@ -13,7 +13,7 @@ try:
 except ImportError:
     from typing_extensions import Literal
 
-from .gw_device_manager import TfDevice, get_first_logical_device
+from .gw_device_manager import TfDevice, get_first_logical_device, init_strategy
 from .gw_timeseries import GwTimeseries
 
 
@@ -270,12 +270,22 @@ def _cqt_batch_process(ts_batch, sample_rate, mismatch, qrange, time_step):
 
 
 class CQTProcessor:
-    def __init__(self, mode: Literal[TfDevice.TPU, TfDevice.GPU, TfDevice.CPU]):
+    def __init__(self, mode: Literal[TfDevice.TPU, TfDevice.GPU, TfDevice.CPU], multidevice_strategy:bool):
         self._in_path = None
         self._task = []
 
         self._mode = mode
-        self._device = get_first_logical_device(self._mode)
+        self._multidevice_strategy = multidevice_strategy
+
+        if self._multidevice_strategy:
+            self._strategy = init_strategy(self._mode)
+        else:
+            self._strategy = get_first_logical_device(self._mode)
+
+    def _get_scope(self):
+        if self._multidevice_strategy:
+            return self._strategy.scope()
+        return tf.device(self._strategy.name)
 
     def scan_directory(self, input_path, output_path, reject_if_exists=True, imitate_loaded=None):
         self._task = []
@@ -325,7 +335,7 @@ class CQTProcessor:
         if shuffle_tasks:
             self._shuffle_tasks()
 
-        with tf.device(self._device.name):
+        with self._get_scope():
             index = 0
             batches_count = self._batches_count(batch_size)
             for tasks in self._crop_tasks_batch(batch_size):
