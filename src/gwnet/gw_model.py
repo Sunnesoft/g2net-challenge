@@ -20,7 +20,7 @@ from tensorflow.keras.layers import Flatten
 from tensorflow.keras.layers import Dense
 
 from .gw_dataset import load_filenames, get_dataset
-from .gw_device_manager import TfDevice, init_processing_device
+from .gw_device_manager import TfDevice, init_strategy
 
 
 def show_batch(image_batch, label_batch):
@@ -40,7 +40,7 @@ def show_batch(image_batch, label_batch):
 class GwModelBase:
     def __init__(self,
                  name: str,
-                 mode: Literal[TfDevice.TPU, TfDevice.GPU, TfDevice.TPU],
+                 mode: Literal[TfDevice.TPU, TfDevice.GPU, TfDevice.CPU],
                  image_size: Tuple[int, int, int],
                  image_scale_factor: Union[None, float] = None,
                  model_path: str= ''):
@@ -48,7 +48,7 @@ class GwModelBase:
         self._name = name
         self._model_path = model_path
 
-        self._strategy = init_processing_device(self._mode)
+        self._strategy = init_strategy(self._mode)
 
         self._dataset_train = None
         self._dataset_valid = None

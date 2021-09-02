@@ -97,7 +97,7 @@ class GwSpectrogram:
         elif file_extension in ['.png']:
             img = Image.fromarray(result)
             if size is not None:
-                img = img.resize(size)
+                img = img
             img.save(fp)
         else:
             raise ValueError('invalid file extension, use .png or .npy')

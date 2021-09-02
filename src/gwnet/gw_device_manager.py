@@ -13,7 +13,8 @@ class TfDevice(Enum):
     TPU = 'TPU'
 
 
-def init_processing_device(mode: Literal[TfDevice.TPU, TfDevice.GPU, TfDevice.TPU], log_on=False):
+def init_strategy(mode: Literal[TfDevice.TPU, TfDevice.GPU, TfDevice.CPU], log_on=False):
+    strategy = None
     if mode == TfDevice.TPU:
         try:
             tpu = tf.distribute.cluster_resolver.TPUClusterResolver()
@@ -21,16 +22,36 @@ def init_processing_device(mode: Literal[TfDevice.TPU, TfDevice.GPU, TfDevice.TP
             tf.tpu.experimental.initialize_tpu_system(tpu)
             strategy = tf.distribute.TPUStrategy(tpu)
             print("Device:", tpu.master())
+            print("Number of replicas:", strategy.num_replicas_in_sync)
+            return strategy
         except:
-            tf.debugging.set_log_device_placement(log_on)
-            dev = tf.config.list_logical_devices(mode.value)
-            strategy = tf.distribute.MirroredStrategy(dev)
-            print("Devices:", dev)
-    else:
-        tf.debugging.set_log_device_placement(log_on)
-        dev = tf.config.list_logical_devices(mode.value)
-        strategy = tf.distribute.MirroredStrategy(dev)
-        print("Devices:", dev)
+            mode = TfDevice.GPU
 
-    print("Number of replicas:", strategy.num_replicas_in_sync)
+    if mode in [TfDevice.GPU, TfDevice.CPU]:
+        tf.debugging.set_log_device_placement(log_on)
+        dev = get_logical_devices(mode)
+        dev_count = len(dev)
+
+        if dev_count < 1:
+            raise RuntimeError('list of logical devices is empty')
+        elif dev_count == 1:
+            strategy = tf.distribute.OneDeviceStrategy(dev[0])
+        else:
+            strategy = tf.distribute.MirroredStrategy(dev)
+        print("Device:", dev)
+        print("Number of replicas:", strategy.num_replicas_in_sync)
+
     return strategy
+
+
+def get_logical_devices(mode: Literal[TfDevice.TPU, TfDevice.GPU, TfDevice.CPU]):
+    return tf.config.list_logical_devices(mode.value)
+
+
+def get_first_logical_device(mode: Literal[TfDevice.TPU, TfDevice.GPU, TfDevice.CPU]):
+    dev = get_logical_devices(mode)
+    dev_count = len(dev)
+
+    if dev_count < 1:
+        raise RuntimeError('list of logical devices is empty')
+    return dev[0]

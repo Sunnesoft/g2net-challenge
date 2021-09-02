@@ -98,7 +98,7 @@ def asd(data, sample_rate: int, fftlength: float = None, overlap: float = 0,
     return f, Pxx ** (1 / 2.)
 
 
-def planck(N, nleft=0, nright=0):
+def _planck(N, nleft=0, nright=0):
     w = np.ones(N)
     if nleft:
         w[0] *= 0
@@ -113,7 +113,7 @@ def planck(N, nleft=0, nright=0):
     return w
 
 
-def interpolate(f, data, df_new):
+def _interpolate(f, data, df_new):
     f0 = f[0]
     size = len(f)
     df = f[1] - f[0]
@@ -123,7 +123,7 @@ def interpolate(f, data, df_new):
     return fsamples, data_new
 
 
-def truncate_transfer(transfer, ncorner=None):
+def _truncate_transfer(transfer, ncorner=None):
     nsamp = transfer.size
     ncorner = ncorner if ncorner else 0
     out = transfer.copy()
@@ -132,7 +132,7 @@ def truncate_transfer(transfer, ncorner=None):
     return out
 
 
-def truncate_impulse(impulse, ntaps, window='hanning'):
+def _truncate_impulse(impulse, ntaps, window='hanning'):
     out = impulse.copy()
     trunc_start = int(ntaps / 2)
     trunc_stop = out.size - trunc_start
@@ -143,15 +143,15 @@ def truncate_impulse(impulse, ntaps, window='hanning'):
     return out
 
 
-def fir_from_transfer(transfer, ntaps, window='hanning', ncorner=None):
-    transfer = truncate_transfer(transfer, ncorner=ncorner)
+def _fir_from_transfer(transfer, ntaps, window='hanning', ncorner=None):
+    transfer = _truncate_transfer(transfer, ncorner=ncorner)
     impulse = irfft(transfer)
-    impulse = truncate_impulse(impulse, ntaps=ntaps, window=window)
+    impulse = _truncate_impulse(impulse, ntaps=ntaps, window=window)
     out = np.roll(impulse, int(ntaps / 2 - 1))[0:ntaps]
     return out
 
 
-def convolve(data, fir, window='hanning'):
+def _convolve(data, fir, window='hanning'):
     pad = int(np.ceil(fir.size / 2))
     nfft = min(8 * fir.size, len(data))
     # condition the input data
@@ -182,13 +182,13 @@ def convolve(data, fir, window='hanning'):
 def whiten_conv(data, sample_rate, fftlength, overlap=0, window='hanning', fduration=2, highpass=None):
     duration = len(data) / sample_rate
     f_asd, v_asd = asd(data=data, sample_rate=sample_rate, fftlength=fftlength, overlap=overlap, window=window)
-    f_asd, v_asd = interpolate(f_asd, v_asd, 1. / duration)
+    f_asd, v_asd = _interpolate(f_asd, v_asd, 1. / duration)
     df = f_asd[1] - f_asd[0]
     ncorner = int(highpass / df) if highpass else 0
     ntaps = int(fduration * sample_rate)
-    tdw = fir_from_transfer(1 / v_asd, ntaps=ntaps, window=window, ncorner=ncorner)
+    tdw = _fir_from_transfer(1 / v_asd, ntaps=ntaps, window=window, ncorner=ncorner)
     data_detr = signal.detrend(data, type='constant')
-    out = convolve(data_detr, tdw, window=window)
+    out = _convolve(data_detr, tdw, window=window)
     return out * np.sqrt(2 / sample_rate)
 
 
