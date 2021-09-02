@@ -11,6 +11,7 @@ class TfDevice(Enum):
     CPU = 'CPU'
     GPU = 'GPU'
     TPU = 'TPU'
+    XLA_CPU = 'XLA_CPU'
 
 
 def init_strategy(mode: Literal[TfDevice.TPU, TfDevice.GPU, TfDevice.CPU], log_on=False):
