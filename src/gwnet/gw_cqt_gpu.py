@@ -14,7 +14,7 @@ try:
 except ImportError:
     from typing_extensions import Literal
 
-from .gw_device_manager import TfDevice, get_first_logical_device, init_strategy
+from .gw_device_manager import TfDevice, get_first_logical_device, init_strategy, print_env
 from .gw_timeseries import GwTimeseries
 
 
@@ -342,17 +342,28 @@ def _cqt_batch_process(ts_batch, sample_rate, mismatch, qrange):
 
 class CQTProcessor:
     def __init__(self, mode: Literal[TfDevice.TPU, TfDevice.GPU, TfDevice.CPU, TfDevice.XLA_CPU],
-                 multidevice_strategy:bool):
+                 multidevice_strategy:bool, verbose=True):
         self._in_path = None
         self._task = []
 
         self._mode = mode
         self._multidevice_strategy = multidevice_strategy
+        self._verbose = verbose
+
+        if self._verbose:
+            print_env()
+            self._print_config()
 
         if self._multidevice_strategy:
-            self._strategy = init_strategy(self._mode)
+            self._strategy = init_strategy(self._mode, self._verbose)
         else:
             self._strategy = get_first_logical_device(self._mode)
+
+    def _print_config(self):
+        print('*-------START CONFIG---*')
+        print('Multi-device strategy: ', self._multidevice_strategy)
+        print('Device type: ', self._mode)
+        print('*-------END CONFIG-----*')
 
     def _get_scope(self):
         if self._multidevice_strategy:
@@ -403,7 +414,7 @@ class CQTProcessor:
 
     def run(self, batch_size, out_path, sample_rate,
             qrange, mismatch, time_range, freq_range,
-            img_size, shuffle_tasks, verbose):
+            img_size, shuffle_tasks):
         if shuffle_tasks:
             self._shuffle_tasks()
 
@@ -434,7 +445,7 @@ class CQTProcessor:
                 _cqt_batch_save(
                     fn_batch=fn_batch, cqti_batch=cqt_batch, out_path=out_path, size=img_size)
 
-                if verbose:
+                if self._verbose:
                     end = time.time()
                     print(f'Batch {index+1}/{batches_count} processed during {end - start}s.')
 

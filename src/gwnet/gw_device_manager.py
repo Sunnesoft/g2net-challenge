@@ -14,7 +14,20 @@ class TfDevice(Enum):
     XLA_CPU = 'XLA_CPU'
 
 
-def init_strategy(mode: Literal[TfDevice.TPU, TfDevice.GPU, TfDevice.CPU], log_on=False):
+def print_env():
+    print('*-------START ENV------*')
+    print('*-------DEVICES--------*')
+    print('All logical devices: ', tf.config.list_logical_devices())
+    print('All physical devices: ', tf.config.list_physical_devices())
+    print('*-------TF-------------*')
+    print('Eagerly mode: ', tf.config.functions_run_eagerly())
+    print('*-------END ENV--------*')
+
+
+def init_strategy(
+        mode: Literal[TfDevice.TPU, TfDevice.GPU, TfDevice.CPU, TfDevice.XLA_CPU],
+        log_on=False,
+        verbose=True):
     strategy = None
     if mode == TfDevice.TPU:
         try:
@@ -22,8 +35,10 @@ def init_strategy(mode: Literal[TfDevice.TPU, TfDevice.GPU, TfDevice.CPU], log_o
             tf.config.experimental_connect_to_cluster(tpu)
             tf.tpu.experimental.initialize_tpu_system(tpu)
             strategy = tf.distribute.TPUStrategy(tpu)
-            print("Device:", tpu.master())
-            print("Number of replicas:", strategy.num_replicas_in_sync)
+
+            if verbose:
+                print("Device:", tpu.master())
+                print("Number of replicas:", strategy.num_replicas_in_sync)
             return strategy
         except:
             mode = TfDevice.GPU
@@ -39,17 +54,21 @@ def init_strategy(mode: Literal[TfDevice.TPU, TfDevice.GPU, TfDevice.CPU], log_o
             strategy = tf.distribute.OneDeviceStrategy(dev[0])
         else:
             strategy = tf.distribute.MirroredStrategy(dev)
-        print("Device:", dev)
-        print("Number of replicas:", strategy.num_replicas_in_sync)
+
+        if verbose:
+            print("Device:", dev)
+            print("Number of replicas:", strategy.num_replicas_in_sync)
 
     return strategy
 
 
-def get_logical_devices(mode: Literal[TfDevice.TPU, TfDevice.GPU, TfDevice.CPU]):
+def get_logical_devices(
+        mode: Literal[TfDevice.TPU, TfDevice.GPU, TfDevice.CPU]):
     return tf.config.list_logical_devices(mode.value)
 
 
-def get_first_logical_device(mode: Literal[TfDevice.TPU, TfDevice.GPU, TfDevice.CPU]):
+def get_first_logical_device(
+        mode: Literal[TfDevice.TPU, TfDevice.GPU, TfDevice.CPU, TfDevice.XLA_CPU]):
     dev = get_logical_devices(mode)
     dev_count = len(dev)
 
