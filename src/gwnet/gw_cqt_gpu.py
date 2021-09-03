@@ -1,11 +1,12 @@
 import tensorflow as tf
+import tensorflow_probability as tfp
 import numpy as np
 import math
 import os
 import random
 import time
 
-from scipy.interpolate import interp2d
+from scipy.interpolate import interp2d, InterpolatedUnivariateSpline
 from PIL import Image
 
 try:
@@ -36,28 +37,44 @@ def _apply_normalization(cqt_interp, minmax=None, esp=1e-6):
     return cqt_interp
 
 
-def _apply_interpolation(cat_ragged, time_range, freq_range):
+def _apply_mqt_interpolation(cqt_ragged, time_range, freq_range):
     xout = np.arange(time_range[0], time_range[1], time_range[2])
     fout = np.arange(freq_range[0], freq_range[1], freq_range[2])
 
     cqt_interp = []
-    for cqt in cat_ragged:
+    for cqt in cqt_ragged:
         tile, freqs = cqt
-        tile = tile.numpy()
-        tile_interp = tile
-
-        # tile_interp = []
-        # for row in tile:
-        #     xrow = np.linspace(0.0, self._duration, len(row))
-        #     interp = InterpolatedUnivariateSpline(xrow, row)
-        #     tile_interp.append(interp(xout))
-
-        tile_interp = np.array(tile_interp)
+        tile_interp = tile.numpy()
         freqs = np.squeeze(freqs.numpy())
         interp = interp2d(xout, freqs, tile_interp, kind='cubic')
         qspc = interp(xout, fout)
         cqt_interp.append(qspc)
     return np.array(cqt_interp)
+
+
+def _apply_cqt_interpolation(cqt_batch, freqs, time_range, freq_range, duration):
+    xout = np.arange(time_range[0], time_range[1], time_range[2])
+    fout = np.arange(freq_range[0], freq_range[1], freq_range[2])
+    fin = freqs.numpy()
+
+    cqtm = []
+    for cqt in cqt_batch:
+        cqt = cqt.numpy()
+        cqtr = []
+        xrow = None
+        for row in cqt:
+            if xrow is None:
+                xrow = np.linspace(0.0, duration, len(row))
+            interp = InterpolatedUnivariateSpline(xrow, row)
+            cqtr.append(interp(xout))
+        cqtm.append(cqtr)
+    cqtm = np.transpose(cqtm, axes=[1, 0, 2])
+
+    cqti = []
+    for cqt in cqtm:
+        interp = interp2d(xout, fin, cqt, kind='cubic')
+        cqti.append(interp(xout, fout))
+    return np.array(cqti)
 
 
 def _interpolate_cubic1d(y, x_step, duration):
@@ -138,6 +155,48 @@ def _multiply_qwindow(task):
     return padded
 
 
+def _apply_cqt_window(fs_batch, q, frequency, duration, sample_rate, mismatch):
+    qprime = q / 11 ** 0.5
+    deltam = 2 * (mismatch / 3.) ** 0.5
+    windowsize = 2 * tf.floor(frequency / qprime * duration) + 1
+    half = tf.floor((windowsize - 1) / 2)
+
+    datai_left = tf.round(-half + (1.0 + frequency * duration))
+    datai_right = datai_left + windowsize
+
+    datai_left = tf.cast(datai_left, dtype=tf.int32)
+    datai_right = tf.cast(datai_right, dtype=tf.int32)
+    half = tf.cast(half, dtype=tf.int32)
+
+    indeces = tf.range(-half, half + 1, 1, dtype=tf.float32)
+    indeces = tf.multiply(indeces, qprime / frequency / duration)
+    tcum_mismatch = duration * 2 * np.pi * frequency / q
+    ntiles = 2 ** tf.math.ceil(tf.experimental.numpy.log2(tcum_mismatch / deltam))
+
+    pad = ntiles - windowsize
+    left_pad = (pad - 1.0) / 2.0
+    right_pad = (pad + 1.0) / 2.0
+
+    left_pad = tf.cast(left_pad, dtype=tf.int32)
+    right_pad = tf.cast(right_pad, dtype=tf.int32)
+
+    padding = tf.convert_to_tensor([[0, 0], [left_pad, right_pad]])
+
+    norm = ntiles / (duration * sample_rate) * (315 * qprime / (128 * frequency)) ** 0.5
+
+    indeces = tf.square(indeces)
+    ones = tf.ones_like(indeces)
+    indeces = tf.subtract(ones, indeces)
+    indeces = tf.square(indeces)
+    indeces = tf.multiply(indeces, norm)
+    window = tf.cast(indeces, dtype=tf.complex128)
+
+    values = fs_batch[:, datai_left:datai_right]
+    values = tf.multiply(values, window)
+    padded = tf.pad(values, padding)
+    return padded
+
+
 def _q_roi(mismatch, qrange):
     deltam = 2 * (mismatch / 3.) ** 0.5
     cumum = tf.math.log(qrange[1] / qrange[0]) / 2 ** 0.5
@@ -164,24 +223,15 @@ def _fft_batch(ts_batch):
 
 
 def _apply_qsearch(fs_batch, qrange, duration, sample_rate, mismatch):
-    fs_batch_count = fs_batch.shape[0]
-
     def _q_search(q):
         nfreq, fstep, minf = _get_freq_range(q, duration, sample_rate, mismatch)
         freqs = _get_freq(nfreq, fstep, minf, q, duration)
 
         def _freq_search(task):
             q_l, freq_l = task
-            q_l = tf.fill([fs_batch_count], tf.cast(q_l, dtype=tf.dtypes.float32))
-            freq_l = tf.fill([fs_batch_count], tf.cast(freq_l, dtype=tf.dtypes.float32))
-            duration_l = tf.fill([fs_batch_count], tf.cast(duration, dtype=tf.dtypes.float32))
-            sample_rate_l = tf.fill([fs_batch_count], tf.cast(sample_rate, dtype=tf.dtypes.float32))
-            mismatch_l = tf.fill([fs_batch_count], tf.cast(mismatch, dtype=tf.dtypes.float32))
 
-            padded = tf.vectorized_map(_multiply_qwindow,
-                                       (fs_batch, q_l, freq_l, duration_l, sample_rate_l, mismatch_l))
-
-            tenergy = tf.signal.ifft(padded)
+            fenergy = _apply_cqt_window(fs_batch, q_l, freq_l, duration, sample_rate, mismatch)
+            tenergy = tf.signal.ifft(fenergy)
             energy = tf.abs(tenergy) ** 2
             energy = tf.multiply(energy, 1.0 / tf.reduce_mean(energy))
             energy = tf.reduce_max(energy, axis=1)
@@ -200,7 +250,7 @@ def _apply_qsearch(fs_batch, qrange, duration, sample_rate, mismatch):
     return tf.gather(qs, maxi)
 
 
-def _apply_cqtransform(q, fs_batch, duration, sample_rate, mismatch, x_step):
+def _apply_mqtransform(q, fs_batch, duration, sample_rate, mismatch, x_step):
     nfreq, fstep, minf = _get_freq_range(q, duration, sample_rate, mismatch)
 
     def _apply_q(task):
@@ -230,6 +280,25 @@ def _apply_cqtransform(q, fs_batch, duration, sample_rate, mismatch, x_step):
                      fn_output_signature=tf.RaggedTensorSpec(shape=[None, None, None], dtype=tf.dtypes.float32))
 
 
+def _apply_cqtransform(q, fs_batch, duration, sample_rate, mismatch):
+    nfreq, fstep, minf = _get_freq_range(q, duration, sample_rate, mismatch)
+    freqs = _get_freq(nfreq, fstep, minf, q, duration)
+
+    def _apply_freq(frequency):
+        fenergy = _apply_cqt_window(fs_batch, q, frequency, duration, sample_rate, mismatch)
+        tenergy = tf.signal.ifft(fenergy)
+        energy = tf.abs(tenergy) ** 2
+        energy = tf.multiply(energy, 1.0 / tf.reduce_mean(energy))
+        energy = tf.cast(energy, dtype=tf.dtypes.float32)
+        energy = tf.ragged.stack(energy)
+        return energy
+
+    v = tf.map_fn(_apply_freq, freqs,
+                  fn_output_signature=tf.RaggedTensorSpec(shape=[None, None, None], dtype=tf.dtypes.float32))
+    v = tf.squeeze(v, axis=[1])
+    return v, freqs
+
+
 def _cqt_batch_save(fn_batch, cqti_batch, out_path='./', size=None):
     for i, fn in enumerate(fn_batch):
         filename, file_extension = os.path.splitext(fn)
@@ -253,24 +322,27 @@ def _cqt_batch_save(fn_batch, cqti_batch, out_path='./', size=None):
             raise ValueError('invalid file extension, use .png or .npy')
 
 
-def _cqt_batch_interpolate(data, original_data_shape, time_range, freq_range):
-    cqti = _apply_interpolation(data, time_range, freq_range)
-    cur_shape = cqti.shape
-    cqti = np.reshape(cqti, [original_data_shape[0], original_data_shape[1], cur_shape[1], cur_shape[2]])
+def _cqt_batch_interpolate(cqt_batch, freqs, sample_rate, original_data_shape, time_range, freq_range):
+    duration = original_data_shape[2] / sample_rate
+    cqti = _apply_cqt_interpolation(cqt_batch, freqs, time_range, freq_range, duration)
+    cqti = np.reshape(cqti, [original_data_shape[0], original_data_shape[1], cqti.shape[1], cqti.shape[2]])
     cqtn = _apply_normalization(cqti)
     return cqtn
 
 
 @tf.function
-def _cqt_batch_process(ts_batch, sample_rate, mismatch, qrange, time_step):
+def _cqt_batch_process(ts_batch, sample_rate, mismatch, qrange):
     fs_batch = _fft_batch(ts_batch)
     duration = _get_duration(ts_batch, sample_rate)
     q = _apply_qsearch(fs_batch, qrange, duration, sample_rate, mismatch)
-    return _apply_cqtransform(q, fs_batch, duration, sample_rate, mismatch, time_step)
+    q_median = tfp.stats.percentile(q, 50.0, interpolation='midpoint')
+    v = _apply_cqtransform(q_median, fs_batch, duration, sample_rate, mismatch)
+    return v
 
 
 class CQTProcessor:
-    def __init__(self, mode: Literal[TfDevice.TPU, TfDevice.GPU, TfDevice.CPU], multidevice_strategy:bool):
+    def __init__(self, mode: Literal[TfDevice.TPU, TfDevice.GPU, TfDevice.CPU, TfDevice.XLA_CPU],
+                 multidevice_strategy:bool):
         self._in_path = None
         self._task = []
 
@@ -355,12 +427,12 @@ class CQTProcessor:
                 ts_batch = np.array(ts_batch)
 
                 original_data_shape = ts_batch.shape
-                time_step = time_range[2]
-                data = _cqt_batch_process(ts_batch, sample_rate, mismatch, qrange, time_step)
-                cqt_batch = _cqt_batch_interpolate(data, original_data_shape, time_range, freq_range)
+                cqt_batch, freqs = _cqt_batch_process(
+                    ts_batch, sample_rate, mismatch, qrange)
+                cqt_batch = _cqt_batch_interpolate(
+                    cqt_batch, freqs, sample_rate, original_data_shape, time_range, freq_range)
                 _cqt_batch_save(
-                    fn_batch=fn_batch, cqti_batch=cqt_batch,
-                    out_path=out_path, size=img_size)
+                    fn_batch=fn_batch, cqti_batch=cqt_batch, out_path=out_path, size=img_size)
 
                 if verbose:
                     end = time.time()

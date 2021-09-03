@@ -20,7 +20,7 @@ if __name__ == '__main__':
         rel_path = root.replace(input_path, '')
 
         files_tmp = []
-        for i in range(200):
+        for i in range(10):
             files_tmp = [*files_tmp, *files]
         files = files_tmp
 
