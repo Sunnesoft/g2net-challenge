@@ -167,15 +167,31 @@ def create_tfrecords(
         shuffle=True,
         batch_size=64,
         remove_older=False,
-        image_size = None):
+        image_size = None,
+        verbose=False):
     if isinstance(labels, str):
         labels = load_labels(labels)
 
+    if verbose:
+        print('*--------DATASET CONFIG--------*')
+        print('With labels:', labels is not None)
+        print('Shuffle:', shuffle)
+        print('Batch size:', batch_size)
+        print('Image size:', image_size)
+        print('Remove older copy:', remove_older)
+        print('Split dataset [%]:', out_task)
+        print('*--------END DATASET CONFIG----*')
+
     tasks = create_task(path, labels, shuffle, out_task, batch_size)
+
+    files_count = 0
 
     for out_path, splitted_tasks in tasks.items():
         if batch_size is None:
             splitted_tasks = [splitted_tasks]
+
+        if verbose:
+            print(f'Next target: {out_path}, batches: {len(splitted_tasks)}.')
 
         if remove_older and os.path.isdir(out_path):
             shutil.rmtree(out_path)
@@ -188,9 +204,13 @@ def create_tfrecords(
                     filename, label = task
                     try:
                         write_tfrecord(writer, filename, label, image_size)
+                        files_count += 1
                     except:
                         print(f'Skip invalid file {filename}')
                         continue
+
+    if verbose:
+        print(f'Total count of processed files: {files_count}')
 
 
 def load_dataset(filenames, labeled=True, linked=False, image_size=None, image_scale=None):

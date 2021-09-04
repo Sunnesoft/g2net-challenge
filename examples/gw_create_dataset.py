@@ -9,4 +9,4 @@ if __name__ == '__main__':
 
     create_tfrecords(fpath, out_task, labels_fn,
                      shuffle=True, batch_size=1024, remove_older=True,
-                     image_size=(71, 71))
+                     image_size=(71, 71), verbose=True)
