@@ -1,8 +1,8 @@
 from src.gwnet import create_tfrecords
 
 if __name__ == '__main__':
-    fpath = '../data/cqt/train/'
-    labels_fn = '../data/tests/training_labels.csv'
+    fpath = '../data/tmp/train/'
+    labels_fn = '../data/test/training_labels.csv'
     out_path = '../data/tfrecords/'
     out_task = {}
     out_task[out_path] = 100

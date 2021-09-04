@@ -47,7 +47,7 @@ def open_image(filename):
 def get_image_name(filename):
     bn = os.path.basename(filename)
     name, file_extension = os.path.splitext(bn)
-    return name
+    return tf.convert_to_tensor(name, tf.string)
 
 
 def read_tfrecord(example, labeled, linked, image_size, image_scale):
