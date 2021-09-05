@@ -20,7 +20,8 @@ from tensorflow.keras.layers import Flatten
 from tensorflow.keras.layers import Dense
 
 from .gw_dataset import load_filenames, get_dataset
-from .gw_device_manager import TfDevice, init_strategy
+from .gw_device_manager import TfDevice, init_strategy, get_first_logical_device, print_env
+from .gw_model_checkpoint_gcs import ModelCheckpointInGcs, copy_file
 
 
 def show_batch(image_batch, label_batch):
@@ -31,7 +32,7 @@ def show_batch(image_batch, label_batch):
     plt.figure(figsize=(10, 10))
     for n in range(batch_size):
         ax = plt.subplot(rows_count, columns_count, n + 1)
-        plt.imshow(image_batch[n] / 255.0)
+        plt.imshow(image_batch[n])
         plt.title(label_batch[n])
         plt.axis("off")
     plt.show()
@@ -43,12 +44,24 @@ class GwModelBase:
                  mode: Literal[TfDevice.TPU, TfDevice.GPU, TfDevice.CPU],
                  image_size: Tuple[int, int, int],
                  image_scale_factor: Union[None, float] = None,
-                 model_path: str= ''):
+                 model_path: str = '',
+                 gcs_dir: Union[str, None] = None,
+                 multidevice_strategy: bool = False,
+                 verbose: bool = False):
         self._mode = mode
         self._name = name
         self._model_path = model_path
+        self._gcs_dir = gcs_dir
+        self._multidevice_strategy = multidevice_strategy
+        self._verbose = verbose
 
-        self._strategy = init_strategy(self._mode)
+        if self._verbose:
+            print_env()
+
+        if self._multidevice_strategy:
+            self._strategy = init_strategy(self._mode, self._verbose)
+        else:
+            self._strategy = get_first_logical_device(self._mode)
 
         self._dataset_train = None
         self._dataset_valid = None
@@ -86,23 +99,38 @@ class GwModelBase:
                 test_fn, labeled=False, linked=True, batch_size=batch_size,
                 shuffle=None, image_size=self._image_size[0:2], image_scale=self._image_scale_factor)
 
+    def _get_scope(self):
+        if self._multidevice_strategy:
+            return self._strategy.scope()
+        return tf.device(self._strategy.name)
+
     def compile(self, **kwargs):
-        with self._strategy.scope():
+        with self._get_scope():
             self._model = self.make_model(**kwargs)
 
     def make_model(self, **kwargs):
         raise NotImplementedError('make_model() procedure must be implemented in GwModelBase class child')
 
-    def load_model(self):
-        self._model.load_weights(self.model_fullpath)
+    def load_model(self, from_gcs=True):
+        path = self.model_fullpath
+        if from_gcs:
+            path = os.path.join(path, self._gcs_dir)
+
+        self._model.load_weights(path)
+
+    def save_model(self, to_gcs=True):
+        self._model.save_weights(self.model_fullpath)
+
+        if to_gcs:
+            copy_file(self.model_fullpath, self._gcs_dir)
 
     def print_model(self):
         print(self._model.summary())
 
     def fit(self, **kwargs):
         if 'callbacks' not in kwargs:
-            checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(
-                self.model_fullpath, save_best_only=True
+            checkpoint_cb = ModelCheckpointInGcs(
+                self.model_fullpath, save_best_only=True, gcs_dir=self._gcs_dir
             )
             early_stopping_cb = tf.keras.callbacks.EarlyStopping(
                 patience=10, restore_best_weights=True
