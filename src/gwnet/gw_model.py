@@ -226,7 +226,7 @@ class GwXception(GwModelBase):
 class GwEfficientNetB0(GwModelBase):
     def make_model(self, learn_rate_schedule=None, **kwargs):
         base_model = tf.keras.applications.EfficientNetB0(
-            input_shape=self._image_size, include_top=False, weights=None
+            input_shape=self._image_size, include_top=False, weights='imagenet'
         )
 
         base_model.trainable = True

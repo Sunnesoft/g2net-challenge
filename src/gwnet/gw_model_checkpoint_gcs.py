@@ -37,7 +37,7 @@ class ModelCheckpointInGcs(keras.callbacks.ModelCheckpoint):
         )
         self._gcs_dir = gcs_dir
 
-    def _save_model(self, epoch, logs):
-        super()._save_model(epoch, logs)
+    def _save_model(self, epoch, batch, logs):
+        super()._save_model(epoch, batch, logs)
         filepath = self._get_file_path(epoch, logs)
         copy_file(filepath, self._gcs_dir)
